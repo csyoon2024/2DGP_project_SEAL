@@ -27,20 +27,20 @@ COLORS = {
 }
 
 LANES = {
-    "rear": {
+    "platform_2": {
         "left": 190,
         "right": 1090,
-        "bottom": 100,
-        "top": 220,
-        "center_y": 160,
+        "bottom": 0,
+        "top": 120,
+        "center_y": 60,
         "scale": 1.0,
     },
-    "front": {
+    "platform_1": {
         "left": 320,
         "right": 960,
-        "bottom": 295,
-        "top": 385,
-        "center_y": 340,
+        "bottom": 195,
+        "top": 285,
+        "center_y": 240,
         "scale": 0.71,
     },
 }
@@ -115,7 +115,7 @@ def draw_room():
         draw_line(floor_x, 0, floor_x, 430)
 
     set_draw_color("wall_light")
-    draw_rectangle(112, 64, 1168, 602)
+    draw_rectangle(112, 0, 1168, 602)
     draw_line(112, 404, 1168, 404)
 
 
@@ -145,12 +145,12 @@ def draw_lane(lane, fill_color, edge_color, tick_count):
 
 def draw_perspective_rails():
     set_draw_color("wall_light")
-    draw_line(190, 100, 320, 295)
-    draw_line(1090, 100, 960, 295)
+    draw_line(190, 0, 320, 195)
+    draw_line(1090, 0, 960, 195)
 
     set_draw_color("floor_line")
-    draw_line(190, 220, 320, 385)
-    draw_line(1090, 220, 960, 385)
+    draw_line(190, 120, 320, 285)
+    draw_line(1090, 120, 960, 285)
 
 
 def draw_boss_marker():
@@ -231,7 +231,7 @@ def draw_player_placeholder(screen_x, foot_y, scale):
 
 class ArenaScene:
     def __init__(self):
-        self.player_lane = "front"
+        self.player_lane = "platform_1"
         self.player_logical_x = 240
 
     def enter(self):
@@ -249,8 +249,8 @@ class ArenaScene:
     def draw(self):
         draw_room()
         draw_perspective_rails()
-        draw_lane(LANES["rear"], "rear_lane", "rear_edge", 10)
-        draw_lane(LANES["front"], "front_lane", "front_edge", 8)
+        draw_lane(LANES["platform_2"], "rear_lane", "rear_edge", 10)
+        draw_lane(LANES["platform_1"], "front_lane", "front_edge", 8)
         draw_boss_marker()
 
         lane = LANES[self.player_lane]
