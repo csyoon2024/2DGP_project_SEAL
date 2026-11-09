@@ -28,16 +28,16 @@ COLORS = {
 
 LANES = {
     "platform_2": {
-        "left": 190,
-        "right": 1090,
+        "left": 0,
+        "right": WIDTH,
         "bottom": 0,
         "top": 120,
         "center_y": 60,
         "scale": 1.0,
     },
     "platform_1": {
-        "left": 320,
-        "right": 960,
+        "left": 0,
+        "right": WIDTH,
         "bottom": 195,
         "top": 285,
         "center_y": 240,
@@ -144,13 +144,36 @@ def draw_lane(lane, fill_color, edge_color, tick_count):
 
 
 def draw_perspective_rails():
+    platform_2 = LANES["platform_2"]
+    platform_1 = LANES["platform_1"]
+
     set_draw_color("wall_light")
-    draw_line(190, 0, 320, 195)
-    draw_line(1090, 0, 960, 195)
+    draw_line(
+        platform_2["left"],
+        platform_2["bottom"],
+        platform_1["left"],
+        platform_1["bottom"],
+    )
+    draw_line(
+        platform_2["right"],
+        platform_2["bottom"],
+        platform_1["right"],
+        platform_1["bottom"],
+    )
 
     set_draw_color("floor_line")
-    draw_line(190, 120, 320, 285)
-    draw_line(1090, 120, 960, 285)
+    draw_line(
+        platform_2["left"],
+        platform_2["top"],
+        platform_1["left"],
+        platform_1["top"],
+    )
+    draw_line(
+        platform_2["right"],
+        platform_2["top"],
+        platform_1["right"],
+        platform_1["top"],
+    )
 
 
 def draw_boss_marker():
