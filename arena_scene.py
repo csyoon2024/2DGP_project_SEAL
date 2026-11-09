@@ -51,6 +51,8 @@ PLAYER_SPEED = 320
 PLAYER_LOGICAL_WIDTH = 900
 PLAYER_X_MIN = 25
 PLAYER_X_MAX = PLAYER_LOGICAL_WIDTH - PLAYER_X_MIN
+LANE_SWITCH_DURATION = 0.25
+LANE_SWITCH_COOLDOWN = 0.6
 
 
 def set_draw_color(name):
@@ -264,6 +266,9 @@ class ArenaScene:
         self.player_lane = "platform_1"
         self.player_logical_x = 240
         self.pressed_keys = set()
+        self.lane_switch_cooldown = 0.0
+        self.lane_transition_target = None
+        self.lane_transition_elapsed = 0.0
 
     def enter(self):
         pass
@@ -274,8 +279,22 @@ class ArenaScene:
     def handle_event(self, event):
         if event.type == pico2d.SDL_KEYDOWN:
             self.pressed_keys.add(event.key)
+            if event.key in (pico2d.SDLK_DOWN, pico2d.SDLK_s):
+                self.start_lane_transition("platform_2")
+            elif event.key in (pico2d.SDLK_UP, pico2d.SDLK_w):
+                self.start_lane_transition("platform_1")
         elif event.type == pico2d.SDL_KEYUP:
             self.pressed_keys.discard(event.key)
+
+    def start_lane_transition(self, target_lane):
+        if self.lane_transition_target is not None:
+            return
+        if self.lane_switch_cooldown > 0 or target_lane == self.player_lane:
+            return
+
+        self.lane_transition_target = target_lane
+        self.lane_transition_elapsed = 0.0
+        self.lane_switch_cooldown = LANE_SWITCH_COOLDOWN
 
     def update(self, fixed_delta):
         move_right = any(
@@ -291,6 +310,17 @@ class ArenaScene:
             min(self.player_logical_x, PLAYER_X_MAX),
         )
 
+        self.lane_switch_cooldown = max(
+            0.0,
+            self.lane_switch_cooldown - fixed_delta,
+        )
+        if self.lane_transition_target is not None:
+            self.lane_transition_elapsed += fixed_delta
+            if self.lane_transition_elapsed >= LANE_SWITCH_DURATION - 1e-9:
+                self.player_lane = self.lane_transition_target
+                self.lane_transition_target = None
+                self.lane_transition_elapsed = 0.0
+
     def draw(self):
         draw_room()
         draw_perspective_rails()
@@ -299,9 +329,24 @@ class ArenaScene:
         draw_boss_marker()
 
         lane = LANES[self.player_lane]
-        screen_width = lane["right"] - lane["left"]
-        screen_x = (
-            lane["left"]
-            + self.player_logical_x * screen_width / PLAYER_LOGICAL_WIDTH
-        )
-        draw_player_placeholder(screen_x, lane["center_y"], lane["scale"])
+        player_y = lane["center_y"]
+        player_scale = lane["scale"]
+
+        if self.lane_transition_target is not None:
+            target_lane = LANES[self.lane_transition_target]
+            progress = min(
+                self.lane_transition_elapsed / LANE_SWITCH_DURATION,
+                1.0,
+            )
+            player_y += (target_lane["center_y"] - player_y) * progress
+            player_scale += (target_lane["scale"] - player_scale) * progress
+            lane_left = lane["left"] + (target_lane["left"] - lane["left"]) * progress
+            lane_right = lane["right"] + (target_lane["right"] - lane["right"]) * progress
+        else:
+            lane_left = lane["left"]
+            lane_right = lane["right"]
+
+        screen_x = lane_left + self.player_logical_x * (
+            lane_right - lane_left
+        ) / PLAYER_LOGICAL_WIDTH
+        draw_player_placeholder(screen_x, player_y, player_scale)
