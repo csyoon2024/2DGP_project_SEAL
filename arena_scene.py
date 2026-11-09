@@ -1,3 +1,5 @@
+import pico2d
+
 from pico2d import (
     draw_circle as pico_draw_circle,
     draw_line as pico_draw_line,
@@ -44,6 +46,11 @@ LANES = {
         "scale": 0.71,
     },
 }
+
+PLAYER_SPEED = 320
+PLAYER_LOGICAL_WIDTH = 900
+PLAYER_X_MIN = 25
+PLAYER_X_MAX = PLAYER_LOGICAL_WIDTH - PLAYER_X_MIN
 
 
 def set_draw_color(name):
@@ -256,6 +263,7 @@ class ArenaScene:
     def __init__(self):
         self.player_lane = "platform_1"
         self.player_logical_x = 240
+        self.pressed_keys = set()
 
     def enter(self):
         pass
@@ -264,10 +272,24 @@ class ArenaScene:
         pass
 
     def handle_event(self, event):
-        pass
+        if event.type == pico2d.SDL_KEYDOWN:
+            self.pressed_keys.add(event.key)
+        elif event.type == pico2d.SDL_KEYUP:
+            self.pressed_keys.discard(event.key)
 
     def update(self, fixed_delta):
-        pass
+        move_right = any(
+            key in self.pressed_keys for key in (pico2d.SDLK_RIGHT, pico2d.SDLK_d)
+        )
+        move_left = any(
+            key in self.pressed_keys for key in (pico2d.SDLK_LEFT, pico2d.SDLK_a)
+        )
+        move_direction = int(move_right) - int(move_left)
+        self.player_logical_x += move_direction * PLAYER_SPEED * fixed_delta
+        self.player_logical_x = max(
+            PLAYER_X_MIN,
+            min(self.player_logical_x, PLAYER_X_MAX),
+        )
 
     def draw(self):
         draw_room()
@@ -277,7 +299,9 @@ class ArenaScene:
         draw_boss_marker()
 
         lane = LANES[self.player_lane]
-        logical_width = 900
         screen_width = lane["right"] - lane["left"]
-        screen_x = lane["left"] + self.player_logical_x * screen_width / logical_width
+        screen_x = (
+            lane["left"]
+            + self.player_logical_x * screen_width / PLAYER_LOGICAL_WIDTH
+        )
         draw_player_placeholder(screen_x, lane["center_y"], lane["scale"])

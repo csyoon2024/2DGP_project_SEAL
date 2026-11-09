@@ -13,5 +13,5 @@ python -m pip install -r requirements.txt
 python main.py
 ```
 
-Press `Esc` to close the game. The initial prototype is a static layout preview;
-player controls and boss behavior are planned for later steps.
+Use the left/right arrows or `A`/`D` to move. Press `Esc` to close the game.
+Platform switching and boss behavior are planned for later steps.
