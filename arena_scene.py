@@ -279,10 +279,13 @@ class ArenaScene:
     def handle_event(self, event):
         if event.type == pico2d.SDL_KEYDOWN:
             self.pressed_keys.add(event.key)
-            if event.key in (pico2d.SDLK_DOWN, pico2d.SDLK_s):
-                self.start_lane_transition("platform_2")
-            elif event.key in (pico2d.SDLK_UP, pico2d.SDLK_w):
-                self.start_lane_transition("platform_1")
+            if event.key in (pico2d.SDLK_LSHIFT, pico2d.SDLK_RSHIFT):
+                target_lane = (
+                    "platform_2"
+                    if self.player_lane == "platform_1"
+                    else "platform_1"
+                )
+                self.start_lane_transition(target_lane)
         elif event.type == pico2d.SDL_KEYUP:
             self.pressed_keys.discard(event.key)
 

@@ -13,6 +13,6 @@ python -m pip install -r requirements.txt
 python main.py
 ```
 
-Use the left/right arrows or `A`/`D` to move. Use the up/down arrows or `W`/`S`
-to switch platforms. Press `Esc` to close the game. Boss behavior is planned for
-a later step.
+Use the left/right arrows or `A`/`D` to move. Press either `Shift` key to switch
+platforms. Press `Esc` to close the game. Boss behavior is planned for a later
+step.
