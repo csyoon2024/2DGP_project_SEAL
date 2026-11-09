@@ -38,8 +38,8 @@ LANES = {
         "scale": 1.0,
     },
     "platform_1": {
-        "left": 0,
-        "right": WIDTH,
+        "left": WIDTH // 20,
+        "right": WIDTH - WIDTH // 20,
         "bottom": 195,
         "top": 285,
         "center_y": 240,
