@@ -4,6 +4,7 @@ class SealGauge:
     BASIC_ATTACK_GAIN = 0.04
     HEAVY_ATTACK_GAIN = 0.12
     BOSS_HIT_LOSS = 0.15
+    AWAKENED_HIT_LOSS = 0.20
     AWAKEN_THRESHOLD = 0.85
     AWAKEN_CLEAR_THRESHOLD = 0.60
 
@@ -36,11 +37,12 @@ class SealGauge:
         self.value = max(0.0, self.value - gain)
         self._update_awakened_state()
 
-    def player_hit(self):
+    def player_hit(self, loss=None):
         if self.player_won or self.boss_won:
             return
 
-        self.value = min(1.0, self.value + self.BOSS_HIT_LOSS)
+        hit_loss = self.BOSS_HIT_LOSS if loss is None else loss
+        self.value = min(1.0, self.value + hit_loss)
         self._update_awakened_state()
 
     def set_debug_value(self, value):

@@ -215,6 +215,49 @@ def draw_boss_marker(hit=False):
     draw_filled_circle(640, 480, 5)
 
 
+def draw_boss_placeholder(awakened=False, hit=False, defeated=False):
+    scale = BossController.AWAKENING_SIZE_SCALE if awakened else 1.0
+    foot_y = 400 if awakened else 480
+    body_half_width = 42 * scale
+    body_bottom = foot_y + 34 * scale
+    body_top = foot_y + 142 * scale
+    head_y = foot_y + 166 * scale
+
+    set_draw_color("shadow")
+    draw_filled_rectangle(640 - 55 * scale, 470, 640 + 55 * scale, 482)
+
+    body_color = "actor_light" if hit else ("wall_light" if defeated else "accent")
+    set_draw_color("actor_dark")
+    draw_filled_rectangle(
+        640 - body_half_width - 8 * scale,
+        body_bottom - 8 * scale,
+        640 + body_half_width + 8 * scale,
+        body_top + 8 * scale,
+    )
+    draw_filled_circle(640, head_y, 34 * scale)
+
+    set_draw_color(body_color)
+    draw_filled_rectangle(
+        640 - body_half_width,
+        body_bottom,
+        640 + body_half_width,
+        body_top,
+    )
+    draw_filled_circle(640, head_y, 27 * scale)
+
+    set_draw_color("actor_dark")
+    draw_line(640 - 30 * scale, head_y + 18 * scale, 640 - 48 * scale, head_y + 48 * scale)
+    draw_line(640 + 30 * scale, head_y + 18 * scale, 640 + 48 * scale, head_y + 48 * scale)
+    draw_line(640 - body_half_width, body_top - 8 * scale, 640 - 72 * scale, foot_y + 88 * scale)
+    draw_line(640 + body_half_width, body_top - 8 * scale, 640 + 72 * scale, foot_y + 88 * scale)
+    draw_line(640 - 20 * scale, body_bottom, 640 - 28 * scale, foot_y)
+    draw_line(640 + 20 * scale, body_bottom, 640 + 28 * scale, foot_y)
+
+    set_draw_color("accent_light")
+    draw_filled_circle(640 - 10 * scale, head_y, 4 * scale)
+    draw_filled_circle(640 + 10 * scale, head_y, 4 * scale)
+
+
 def draw_player_placeholder(screen_x, foot_y, scale):
     head_radius = 12 * scale
     body_half_width = 13 * scale
@@ -300,6 +343,7 @@ class ArenaScene:
         self.seal_gauge = SealGauge()
         self.boss = BossController()
         self.boss_phase = 1
+        self.boss_defeated = False
         self.debug_panel_visible = False
         self.debug_hitboxes_visible = False
         self.debug_invulnerability_enabled = False
@@ -397,6 +441,11 @@ class ArenaScene:
         self.attack_elapsed = 0.0
         self.attack_hit_registered = False
         self.player_health = PLAYER_MAX_HEALTH
+        self.seal_gauge = SealGauge()
+        self.boss_phase = 1
+        self.debug_phase = 1
+        self.boss_defeated = False
+        self.boss.reset_for_phase(1)
 
     def receive_player_hit(self):
         if self.debug_invulnerability_enabled or self.invulnerability_timer > 0:
@@ -404,7 +453,12 @@ class ArenaScene:
         if self.player_health <= 0:
             return False
         self.player_health -= 1
-        self.seal_gauge.player_hit()
+        hit_loss = (
+            SealGauge.AWAKENED_HIT_LOSS
+            if self.boss.awakened
+            else SealGauge.BOSS_HIT_LOSS
+        )
+        self.seal_gauge.player_hit(hit_loss)
         return True
 
     def consume_debug_phase_jump(self):
@@ -463,6 +517,9 @@ class ArenaScene:
         return attack_left <= boss_right and attack_right >= boss_left
 
     def update(self, fixed_delta):
+        if self.boss_defeated:
+            return
+
         attack_locked = self.attack_type is not None
         move_right = any(
             key in self.pressed_keys for key in (pico2d.SDLK_RIGHT, pico2d.SDLK_d)
@@ -481,6 +538,7 @@ class ArenaScene:
         )
         self.boss_hit_timer = max(0.0, self.boss_hit_timer - fixed_delta)
         self.seal_gauge.update(fixed_delta)
+        self.boss.set_awakened(self.seal_gauge.boss_awakened)
 
         if attack_locked:
             attack_duration = (
@@ -531,6 +589,8 @@ class ArenaScene:
         if phase_jump is not None:
             self.boss_phase = phase_jump
             self.debug_phase = phase_jump
+            self.boss.reset_for_phase(phase_jump)
+            self.boss.set_awakened(self.seal_gauge.boss_awakened)
 
         forced_pattern = None
         if self.boss.state == "rest" and self.boss.timer <= fixed_delta:
@@ -546,6 +606,38 @@ class ArenaScene:
         for boss_attack in boss_attacks:
             self.resolve_boss_attack(boss_attack)
 
+        if self.player_health <= 0 or self.seal_gauge.boss_won:
+            self.restart_current_phase()
+        elif self.seal_gauge.player_won:
+            if self.boss_phase == 1:
+                self.boss_phase = 2
+                self.debug_phase = 2
+                self.seal_gauge.set_debug_value(0.5)
+                self.boss.reset_for_phase(2)
+                self.boss.begin_awakening_demo()
+            else:
+                self.boss_defeated = True
+
+    def restart_current_phase(self):
+        phase = self.boss_phase
+        self.player_health = PLAYER_MAX_HEALTH
+        self.player_lane = "platform_1"
+        self.player_logical_x = 240
+        self.pressed_keys.clear()
+        self.dodge_direction = 0
+        self.dodge_elapsed = 0.0
+        self.dodge_cooldown = 0.0
+        self.invulnerability_timer = 0.0
+        self.attack_type = None
+        self.attack_elapsed = 0.0
+        self.attack_hit_registered = False
+        self.lane_transition_target = None
+        self.lane_transition_elapsed = 0.0
+        self.lane_switch_cooldown = 0.0
+        self.seal_gauge.set_debug_value(0.5)
+        self.boss.reset_for_phase(phase)
+        self.boss.set_awakened(False)
+
     def resolve_boss_attack(self, attack):
         if self.debug_invulnerability_enabled or self.invulnerability_timer > 0:
             return False
@@ -560,7 +652,12 @@ class ArenaScene:
                 or self.player_lane == attack.target_lane
             )
             target_x = attack.target_x if attack.target_x is not None else BOSS_LOGICAL_X
-            hitbox_half_width = (attack.hitbox_width or 0) * 0.5
+            hitbox_scale = (
+                BossController.AWAKENING_HITBOX_SCALE
+                if self.boss.awakened
+                else 1.0
+            )
+            hitbox_half_width = (attack.hitbox_width or 0) * hitbox_scale * 0.5
             overlaps = lane_matches and abs(self.player_logical_x - target_x) <= (
                 hitbox_half_width + 25
             )
@@ -574,7 +671,12 @@ class ArenaScene:
         draw_perspective_rails()
         draw_lane(LANES["platform_2"], "rear_lane", "rear_edge", 10)
         draw_lane(LANES["platform_1"], "front_lane", "front_edge", 8)
-        draw_boss_marker(self.boss_hit_timer > 0)
+        draw_boss_placeholder(
+            self.boss.awakened,
+            self.boss_hit_timer > 0,
+            self.boss_defeated,
+        )
+        self.draw_boss_status()
         self.draw_seal_gauge()
         self.draw_boss_telegraph()
 
@@ -600,6 +702,7 @@ class ArenaScene:
             lane_right - lane_left
         ) / PLAYER_LOGICAL_WIDTH
         draw_player_placeholder(screen_x, player_y, player_scale)
+        self.draw_player_health()
 
         if self.attack_type is not None:
             set_draw_color("accent_light")
@@ -764,3 +867,31 @@ class ArenaScene:
                 rear_lane["right"] - rear_lane["left"]
             ) / PLAYER_LOGICAL_WIDTH
             draw_filled_circle(rear_x, rear_lane["center_y"], radius)
+
+    def draw_player_health(self):
+        for health_index in range(PLAYER_MAX_HEALTH):
+            color = "accent_light" if health_index < self.player_health else "wall_light"
+            set_draw_color(color)
+            health_x = WIDTH - 38 - health_index * 30
+            draw_filled_circle(health_x, HEIGHT - 34, 10)
+
+    def draw_boss_status(self):
+        if self.debug_font is None:
+            font_path = os.path.join(
+                os.environ.get("WINDIR", "C:/Windows"),
+                "Fonts",
+                "consola.ttf",
+            )
+            try:
+                self.debug_font = pico2d.load_font(font_path, 15)
+            except (OSError, RuntimeError):
+                return
+        if self.boss_defeated:
+            status = "BOSS DEFEATED"
+        else:
+            state = "AWAKENED" if self.boss.awakened else "NORMAL"
+            pattern = self.boss.current_pattern or "WAIT"
+            status = f"BOSS PHASE {self.boss_phase}  {state}  {pattern.upper()}"
+        self.debug_font.draw(24, HEIGHT - 40, status, (240, 230, 215))
+        status = "BOSS DEFEATED" if self.boss_defeated else f"BOSS  PHASE {self.boss_phase}"
+        self.debug_font.draw(24, HEIGHT - 40, status, (240, 230, 215))

@@ -19,4 +19,5 @@ Press `F1` to toggle the debug panel, `F2` to show collision boxes, `F3` to
 toggle invulnerability, `F4` to reset the player, and `H` with the panel open to
 test a hit. `F5` requests a phase jump, `[`/`]` adjust the debug gauge, `F6`
 cycles a forced pattern, and `F7` toggles a fixed random seed. Press `Esc` to
-close the game. Boss behavior is planned for a later step.
+close the game. Boss 1 has two phases with slam, charge, shockwave, missile, and
+double-slam patterns. Push the shared gauge to the left to clear each phase.
