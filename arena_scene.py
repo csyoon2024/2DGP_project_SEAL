@@ -3,6 +3,7 @@ import random
 
 import pico2d
 
+from seal_gauge import SealGauge
 from pico2d import (
     draw_circle as pico_draw_circle,
     draw_line as pico_draw_line,
@@ -295,6 +296,7 @@ class ArenaScene:
         self.successful_hits = 0
         self.boss_hit_timer = 0.0
         self.player_health = PLAYER_MAX_HEALTH
+        self.seal_gauge = SealGauge()
         self.debug_panel_visible = False
         self.debug_hitboxes_visible = False
         self.debug_invulnerability_enabled = False
@@ -330,14 +332,12 @@ class ArenaScene:
                 self.debug_phase = 2 if self.debug_phase == 1 else 1
                 self.debug_phase_jump_request = self.debug_phase
             elif event.key == pico2d.SDLK_LEFTBRACKET:
-                self.debug_seal_gauge = max(
-                    0.0,
-                    self.debug_seal_gauge - DEBUG_GAUGE_STEP,
+                self.seal_gauge.set_debug_value(
+                    self.seal_gauge.value - DEBUG_GAUGE_STEP
                 )
             elif event.key == pico2d.SDLK_RIGHTBRACKET:
-                self.debug_seal_gauge = min(
-                    1.0,
-                    self.debug_seal_gauge + DEBUG_GAUGE_STEP,
+                self.seal_gauge.set_debug_value(
+                    self.seal_gauge.value + DEBUG_GAUGE_STEP
                 )
             elif event.key == pico2d.SDLK_F6:
                 pattern_index = DEBUG_BOSS_PATTERNS.index(self.debug_forced_pattern) + 1 if self.debug_forced_pattern in DEBUG_BOSS_PATTERNS else 0
@@ -401,6 +401,7 @@ class ArenaScene:
         if self.player_health <= 0:
             return False
         self.player_health -= 1
+        self.seal_gauge.player_hit()
         return True
 
     def consume_debug_phase_jump(self):
@@ -476,6 +477,7 @@ class ArenaScene:
             self.invulnerability_timer - fixed_delta,
         )
         self.boss_hit_timer = max(0.0, self.boss_hit_timer - fixed_delta)
+        self.seal_gauge.update(fixed_delta)
 
         if attack_locked:
             attack_duration = (
@@ -491,6 +493,7 @@ class ArenaScene:
                 if self.resolve_attack_hit():
                     self.successful_hits += 1
                     self.boss_hit_timer = 0.12
+                    self.seal_gauge.player_attack_hit(self.attack_type)
                 self.attack_hit_registered = True
             if self.attack_elapsed >= attack_duration - 1e-9:
                 self.attack_type = None
@@ -527,6 +530,7 @@ class ArenaScene:
         draw_lane(LANES["platform_2"], "rear_lane", "rear_edge", 10)
         draw_lane(LANES["platform_1"], "front_lane", "front_edge", 8)
         draw_boss_marker(self.boss_hit_timer > 0)
+        self.draw_seal_gauge()
 
         lane = LANES[self.player_lane]
         player_y = lane["center_y"]
@@ -632,7 +636,7 @@ class ArenaScene:
             f"INVULN     {'ON' if self.debug_invulnerability_enabled else f'{self.invulnerability_timer:4.2f}s'}",
             f"HITS       {self.successful_hits}",
             f"PHASE      {self.debug_phase}  [F5 jump]",
-            f"GAUGE      {self.debug_seal_gauge:4.0%}  [[ / ] adjust]",
+            f"GAUGE      {self.seal_gauge.value:4.0%}  [[ / ] adjust]",
             f"PATTERN    {self.debug_forced_pattern or '-'}  [F6 cycle]",
             f"SEED       {'FIXED ' + str(self.debug_pattern_seed) if self.debug_pattern_seed_fixed else 'RANDOM'}  [F7]",
         )
@@ -643,3 +647,37 @@ class ArenaScene:
                 text,
                 (221, 235, 220),
             )
+
+    def draw_seal_gauge(self):
+        gauge_left = 360
+        gauge_right = 920
+        gauge_bottom = 650
+        gauge_top = 682
+        gauge_inner_left = gauge_left + 2
+        gauge_inner_right = gauge_right - 2
+        gauge_width = gauge_inner_right - gauge_inner_left
+        player_edge = gauge_inner_left + gauge_width * (1.0 - self.seal_gauge.value)
+
+        set_draw_color("actor_dark")
+        draw_filled_rectangle(gauge_left, gauge_bottom, gauge_right, gauge_top)
+        if player_edge > gauge_inner_left:
+            set_draw_color("rear_edge")
+            draw_filled_rectangle(
+                gauge_inner_left,
+                gauge_bottom + 2,
+                player_edge,
+                gauge_top - 2,
+            )
+        if player_edge < gauge_inner_right:
+            set_draw_color("accent")
+            draw_filled_rectangle(
+                player_edge,
+                gauge_bottom + 2,
+                gauge_inner_right,
+                gauge_top - 2,
+            )
+        set_draw_color("actor_light")
+        for gauge_threshold in (0.60, 0.85):
+            threshold_x = gauge_inner_left + gauge_width * (1.0 - gauge_threshold)
+            draw_line(threshold_x, gauge_bottom, threshold_x, gauge_top)
+        draw_rectangle(gauge_left, gauge_bottom, gauge_right, gauge_top)
