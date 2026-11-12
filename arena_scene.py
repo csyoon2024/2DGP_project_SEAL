@@ -61,6 +61,7 @@ BOSS_LOGICAL_X = PLAYER_LOGICAL_WIDTH / 2
 BOSS_HITBOX_HALF_WIDTH = 35
 BASIC_ATTACK_DURATION = 0.25
 BASIC_ATTACK_REACH = 120
+HEAVY_ATTACK_DURATION = 0.70
 
 
 def set_draw_color(name):
@@ -307,7 +308,9 @@ class ArenaScene:
                 )
                 self.start_lane_transition(target_lane)
             elif event.key == pico2d.SDLK_j:
-                self.start_basic_attack()
+                self.start_attack("basic")
+            elif event.key == pico2d.SDLK_k:
+                self.start_attack("heavy")
         elif event.type == pico2d.SDL_KEYUP:
             self.pressed_keys.discard(event.key)
 
@@ -341,7 +344,7 @@ class ArenaScene:
         self.dodge_cooldown = DODGE_COOLDOWN
         self.invulnerability_timer = DODGE_INVULNERABLE_DURATION
 
-    def start_basic_attack(self):
+    def start_attack(self, attack_type):
         if self.player_lane != "platform_1":
             return
         if self.attack_type is not None or self.dodge_direction != 0:
@@ -349,11 +352,11 @@ class ArenaScene:
         if self.lane_transition_target is not None:
             return
 
-        self.attack_type = "basic"
+        self.attack_type = attack_type
         self.attack_elapsed = 0.0
         self.attack_hit_registered = False
 
-    def resolve_basic_attack_hit(self):
+    def resolve_attack_hit(self):
         if self.player_lane != "platform_1":
             return False
 
@@ -388,16 +391,21 @@ class ArenaScene:
         self.boss_hit_timer = max(0.0, self.boss_hit_timer - fixed_delta)
 
         if attack_locked:
+            attack_duration = (
+                BASIC_ATTACK_DURATION
+                if self.attack_type == "basic"
+                else HEAVY_ATTACK_DURATION
+            )
             self.attack_elapsed += fixed_delta
             if (
                 not self.attack_hit_registered
-                and self.attack_elapsed >= BASIC_ATTACK_DURATION * 0.5
+                and self.attack_elapsed >= attack_duration * 0.5
             ):
-                if self.resolve_basic_attack_hit():
+                if self.resolve_attack_hit():
                     self.successful_hits += 1
                     self.boss_hit_timer = 0.12
                 self.attack_hit_registered = True
-            if self.attack_elapsed >= BASIC_ATTACK_DURATION - 1e-9:
+            if self.attack_elapsed >= attack_duration - 1e-9:
                 self.attack_type = None
                 self.attack_elapsed = 0.0
                 self.attack_hit_registered = False
@@ -456,14 +464,17 @@ class ArenaScene:
         ) / PLAYER_LOGICAL_WIDTH
         draw_player_placeholder(screen_x, player_y, player_scale)
 
-        if self.attack_type == "basic":
+        if self.attack_type is not None:
             set_draw_color("accent_light")
             slash_start_x = screen_x + self.facing_direction * 12 * player_scale
             slash_end_x = screen_x + self.facing_direction * 48 * player_scale
             slash_y = player_y + 38 * player_scale
-            draw_line(
-                slash_start_x,
-                slash_y - 10 * player_scale,
-                slash_end_x,
-                slash_y + 12 * player_scale,
-            )
+            slash_count = 2 if self.attack_type == "heavy" else 1
+            for slash_index in range(slash_count):
+                slash_offset = slash_index * 7 * player_scale
+                draw_line(
+                    slash_start_x,
+                    slash_y - 10 * player_scale + slash_offset,
+                    slash_end_x,
+                    slash_y + 12 * player_scale + slash_offset,
+                )
