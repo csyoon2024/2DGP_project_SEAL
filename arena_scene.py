@@ -444,12 +444,17 @@ class ArenaScene:
         self.attack_type = None
         self.attack_elapsed = 0.0
         self.attack_hit_registered = False
+        self.successful_hits = 0
+        self.boss_hit_timer = 0.0
         self.player_health = PLAYER_MAX_HEALTH
         self.seal_gauge = SealGauge()
         self.boss_phase = 1
         self.debug_phase = 1
+        self.debug_phase_jump_request = None
+        self.debug_forced_pattern = None
         self.boss_defeated = False
         self.boss.reset_for_phase(1)
+        self.boss.set_awakened(False)
 
     def receive_player_hit(self):
         if self.debug_invulnerability_enabled or self.invulnerability_timer > 0:
