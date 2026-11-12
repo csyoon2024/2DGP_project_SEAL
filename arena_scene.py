@@ -850,14 +850,20 @@ class ArenaScene:
         if self.boss.current_pattern in ("slam", "double_slam"):
             target_lane = LANES["platform_1"]
             target_x = BOSS_LOGICAL_X
+        elif pattern["kind"] == "piercing":
+            target_lane = LANES["platform_1"]
+            target_x = BOSS_LOGICAL_X
         else:
             target_lane = LANES[self.boss.target_lane]
             target_x = self.boss.target_x or BOSS_LOGICAL_X
 
+        platform_scale = (
+            target_lane["right"] - target_lane["left"]
+        ) / PLAYER_LOGICAL_WIDTH
         screen_x = target_lane["left"] + target_x * (
             target_lane["right"] - target_lane["left"]
         ) / PLAYER_LOGICAL_WIDTH
-        radius = max(8, int((pattern["hitbox_width"] or 80) * 0.5))
+        radius = max(8, int((pattern["hitbox_width"] or 80) * 0.5 * platform_scale))
         set_draw_color("accent_light")
         draw_filled_circle(screen_x, target_lane["center_y"], radius)
 
