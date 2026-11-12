@@ -15,4 +15,5 @@ python main.py
 
 Use the left/right arrows or `A`/`D` to move. Press `J` for a basic attack, `K`
 for a heavy attack, `Space` to dodge, and either `Shift` key to switch platforms.
-Press `Esc` to close the game. Boss behavior is planned for a later step.
+Press `F1` to toggle the debug panel and `Esc` to close the game. Boss behavior
+is planned for a later step.

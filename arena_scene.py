@@ -1,3 +1,5 @@
+import os
+
 import pico2d
 
 from pico2d import (
@@ -288,6 +290,8 @@ class ArenaScene:
         self.attack_hit_registered = False
         self.successful_hits = 0
         self.boss_hit_timer = 0.0
+        self.debug_panel_visible = False
+        self.debug_font = None
 
     def enter(self):
         pass
@@ -298,7 +302,9 @@ class ArenaScene:
     def handle_event(self, event):
         if event.type == pico2d.SDL_KEYDOWN:
             self.pressed_keys.add(event.key)
-            if event.key == pico2d.SDLK_SPACE:
+            if event.key == pico2d.SDLK_F1:
+                self.debug_panel_visible = not self.debug_panel_visible
+            elif event.key == pico2d.SDLK_SPACE:
                 self.start_dodge()
             elif event.key in (pico2d.SDLK_LSHIFT, pico2d.SDLK_RSHIFT):
                 target_lane = (
@@ -478,3 +484,40 @@ class ArenaScene:
                     slash_end_x,
                     slash_y + 12 * player_scale + slash_offset,
                 )
+
+        if self.debug_panel_visible:
+            self.draw_debug_panel()
+
+    def draw_debug_panel(self):
+        set_draw_color("actor_dark")
+        draw_filled_rectangle(20, 492, 405, 700)
+        set_draw_color("rear_edge")
+        draw_rectangle(20, 492, 405, 700)
+
+        if self.debug_font is None:
+            font_path = os.path.join(
+                os.environ.get("WINDIR", "C:/Windows"),
+                "Fonts",
+                "consola.ttf",
+            )
+            try:
+                self.debug_font = pico2d.load_font(font_path, 15)
+            except (OSError, RuntimeError):
+                return
+
+        action = self.attack_type or ("dodge" if self.dodge_direction else "idle")
+        status_lines = (
+            "DEBUG  [F1] CLOSE",
+            f"PLAYER X   {self.player_logical_x:6.1f}",
+            f"PLATFORM   {self.player_lane}",
+            f"ACTION     {action}",
+            f"INVULN     {self.invulnerability_timer:4.2f}s",
+            f"HITS       {self.successful_hits}",
+        )
+        for line_index, text in enumerate(status_lines):
+            self.debug_font.draw(
+                36,
+                676 - line_index * 28,
+                text,
+                (221, 235, 220),
+            )
