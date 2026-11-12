@@ -64,6 +64,7 @@ BOSS_HITBOX_HALF_WIDTH = 35
 BASIC_ATTACK_DURATION = 0.25
 BASIC_ATTACK_REACH = 120
 HEAVY_ATTACK_DURATION = 0.70
+PLAYER_MAX_HEALTH = 3
 
 
 def set_draw_color(name):
@@ -290,8 +291,10 @@ class ArenaScene:
         self.attack_hit_registered = False
         self.successful_hits = 0
         self.boss_hit_timer = 0.0
+        self.player_health = PLAYER_MAX_HEALTH
         self.debug_panel_visible = False
         self.debug_hitboxes_visible = False
+        self.debug_invulnerability_enabled = False
         self.debug_font = None
 
     def enter(self):
@@ -307,6 +310,14 @@ class ArenaScene:
                 self.debug_panel_visible = not self.debug_panel_visible
             elif event.key == pico2d.SDLK_F2:
                 self.debug_hitboxes_visible = not self.debug_hitboxes_visible
+            elif event.key == pico2d.SDLK_F3:
+                self.debug_invulnerability_enabled = (
+                    not self.debug_invulnerability_enabled
+                )
+            elif event.key == pico2d.SDLK_F4:
+                self.reset_player()
+            elif event.key == pico2d.SDLK_h and self.debug_panel_visible:
+                self.receive_player_hit()
             elif event.key == pico2d.SDLK_SPACE:
                 self.start_dodge()
             elif event.key in (pico2d.SDLK_LSHIFT, pico2d.SDLK_RSHIFT):
@@ -334,6 +345,30 @@ class ArenaScene:
         self.lane_transition_target = target_lane
         self.lane_transition_elapsed = 0.0
         self.lane_switch_cooldown = LANE_SWITCH_COOLDOWN
+
+    def reset_player(self):
+        self.player_lane = "platform_1"
+        self.player_logical_x = 240
+        self.pressed_keys.clear()
+        self.lane_switch_cooldown = 0.0
+        self.lane_transition_target = None
+        self.lane_transition_elapsed = 0.0
+        self.dodge_direction = 0
+        self.dodge_elapsed = 0.0
+        self.dodge_cooldown = 0.0
+        self.invulnerability_timer = 0.0
+        self.attack_type = None
+        self.attack_elapsed = 0.0
+        self.attack_hit_registered = False
+        self.player_health = PLAYER_MAX_HEALTH
+
+    def receive_player_hit(self):
+        if self.debug_invulnerability_enabled or self.invulnerability_timer > 0:
+            return False
+        if self.player_health <= 0:
+            return False
+        self.player_health -= 1
+        return True
 
     def start_dodge(self):
         if self.dodge_direction != 0 or self.dodge_cooldown > 0:
@@ -550,13 +585,14 @@ class ArenaScene:
             f"PLAYER X   {self.player_logical_x:6.1f}",
             f"PLATFORM   {self.player_lane}",
             f"ACTION     {action}",
-            f"INVULN     {self.invulnerability_timer:4.2f}s",
+            f"HEALTH     {self.player_health}/{PLAYER_MAX_HEALTH}",
+            f"INVULN     {'ON' if self.debug_invulnerability_enabled else f'{self.invulnerability_timer:4.2f}s'}",
             f"HITS       {self.successful_hits}",
         )
         for line_index, text in enumerate(status_lines):
             self.debug_font.draw(
                 36,
-                676 - line_index * 28,
+                676 - line_index * 25,
                 text,
                 (221, 235, 220),
             )
