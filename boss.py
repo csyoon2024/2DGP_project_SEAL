@@ -71,11 +71,19 @@ class BossAttack:
 
 class BossController:
     PATTERN_GAP = 0.60
+    AWAKENING_DEMO_DURATION = 2.0
+    AWAKENING_SIZE_SCALE = 1.6
+    AWAKENING_HITBOX_SCALE = 1.4
 
     def __init__(self):
+        self.awakened = False
+        self.phase = 1
+        self.reset_for_phase(1)
+
+    def reset_for_phase(self, phase):
         self.state = "rest"
         self.timer = self.PATTERN_GAP
-        self.phase = 1
+        self.phase = phase
         self.current_pattern = None
         self.previous_pattern = None
         self.target_lane = None
@@ -83,9 +91,26 @@ class BossController:
         self.attack_elapsed = 0.0
         self.next_hit_index = 0
 
+    def begin_awakening_demo(self):
+        self.awakened = True
+        self.state = "awakening"
+        self.timer = self.AWAKENING_DEMO_DURATION
+
+    def set_awakened(self, awakened):
+        if self.state != "awakening":
+            self.awakened = awakened
+
     def update(self, fixed_delta, phase, player_lane, player_x, rng, forced_pattern=None):
         self.phase = phase
         attacks = []
+
+        if self.state == "awakening":
+            self.timer -= fixed_delta
+            if self.timer <= 1e-9:
+                self.awakened = False
+                self.state = "rest"
+                self.timer = self.PATTERN_GAP
+            return attacks
 
         if self.state == "rest":
             self.timer -= fixed_delta
