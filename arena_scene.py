@@ -9,7 +9,7 @@ from pico2d import (
     draw_line as pico_draw_line,
     draw_rectangle as pico_draw_rectangle,
 )
-from boss import BossAttack, BossController, PATTERNS
+from boss import BossAttack, BossController, PATTERNS, PHASE_PATTERNS
 
 
 WIDTH = 1280
@@ -69,7 +69,6 @@ BASIC_ATTACK_REACH = 120
 HEAVY_ATTACK_DURATION = 0.70
 PLAYER_MAX_HEALTH = 3
 DEBUG_GAUGE_STEP = 0.05
-DEBUG_BOSS_PATTERNS = ("slam", "charge", "shockwave", "missile", "double_slam")
 
 
 def set_draw_color(name):
@@ -387,9 +386,14 @@ class ArenaScene:
                     self.seal_gauge.value + DEBUG_GAUGE_STEP
                 )
             elif event.key == pico2d.SDLK_F6:
-                pattern_index = DEBUG_BOSS_PATTERNS.index(self.debug_forced_pattern) + 1 if self.debug_forced_pattern in DEBUG_BOSS_PATTERNS else 0
-                self.debug_forced_pattern = DEBUG_BOSS_PATTERNS[
-                    pattern_index % len(DEBUG_BOSS_PATTERNS)
+                available_patterns = tuple(PHASE_PATTERNS[self.boss_phase])
+                pattern_index = (
+                    available_patterns.index(self.debug_forced_pattern) + 1
+                    if self.debug_forced_pattern in available_patterns
+                    else 0
+                )
+                self.debug_forced_pattern = available_patterns[
+                    pattern_index % len(available_patterns)
                 ]
             elif event.key == pico2d.SDLK_F7:
                 self.debug_pattern_seed_fixed = not self.debug_pattern_seed_fixed
