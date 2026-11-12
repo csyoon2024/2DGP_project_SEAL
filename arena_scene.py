@@ -53,6 +53,10 @@ PLAYER_X_MIN = 25
 PLAYER_X_MAX = PLAYER_LOGICAL_WIDTH - PLAYER_X_MIN
 LANE_SWITCH_DURATION = 0.25
 LANE_SWITCH_COOLDOWN = 0.6
+DODGE_DURATION = 0.35
+DODGE_DISTANCE = 160
+DODGE_INVULNERABLE_DURATION = 0.2
+DODGE_COOLDOWN = 0.5
 
 
 def set_draw_color(name):
@@ -269,6 +273,11 @@ class ArenaScene:
         self.lane_switch_cooldown = 0.0
         self.lane_transition_target = None
         self.lane_transition_elapsed = 0.0
+        self.facing_direction = 1
+        self.dodge_direction = 0
+        self.dodge_elapsed = 0.0
+        self.dodge_cooldown = 0.0
+        self.invulnerability_timer = 0.0
 
     def enter(self):
         pass
@@ -279,7 +288,9 @@ class ArenaScene:
     def handle_event(self, event):
         if event.type == pico2d.SDL_KEYDOWN:
             self.pressed_keys.add(event.key)
-            if event.key in (pico2d.SDLK_LSHIFT, pico2d.SDLK_RSHIFT):
+            if event.key == pico2d.SDLK_SPACE:
+                self.start_dodge()
+            elif event.key in (pico2d.SDLK_LSHIFT, pico2d.SDLK_RSHIFT):
                 target_lane = (
                     "platform_2"
                     if self.player_lane == "platform_1"
@@ -290,6 +301,8 @@ class ArenaScene:
             self.pressed_keys.discard(event.key)
 
     def start_lane_transition(self, target_lane):
+        if self.dodge_direction != 0:
+            return
         if self.lane_transition_target is not None:
             return
         if self.lane_switch_cooldown > 0 or target_lane == self.player_lane:
@@ -299,6 +312,24 @@ class ArenaScene:
         self.lane_transition_elapsed = 0.0
         self.lane_switch_cooldown = LANE_SWITCH_COOLDOWN
 
+    def start_dodge(self):
+        if self.dodge_direction != 0 or self.dodge_cooldown > 0:
+            return
+        if self.lane_transition_target is not None:
+            return
+
+        move_right = any(
+            key in self.pressed_keys for key in (pico2d.SDLK_RIGHT, pico2d.SDLK_d)
+        )
+        move_left = any(
+            key in self.pressed_keys for key in (pico2d.SDLK_LEFT, pico2d.SDLK_a)
+        )
+        move_direction = int(move_right) - int(move_left)
+        self.dodge_direction = move_direction or self.facing_direction
+        self.dodge_elapsed = 0.0
+        self.dodge_cooldown = DODGE_COOLDOWN
+        self.invulnerability_timer = DODGE_INVULNERABLE_DURATION
+
     def update(self, fixed_delta):
         move_right = any(
             key in self.pressed_keys for key in (pico2d.SDLK_RIGHT, pico2d.SDLK_d)
@@ -307,7 +338,23 @@ class ArenaScene:
             key in self.pressed_keys for key in (pico2d.SDLK_LEFT, pico2d.SDLK_a)
         )
         move_direction = int(move_right) - int(move_left)
-        self.player_logical_x += move_direction * PLAYER_SPEED * fixed_delta
+        if move_direction != 0:
+            self.facing_direction = move_direction
+
+        self.dodge_cooldown = max(0.0, self.dodge_cooldown - fixed_delta)
+        self.invulnerability_timer = max(
+            0.0,
+            self.invulnerability_timer - fixed_delta,
+        )
+        if self.dodge_direction != 0:
+            dodge_step = DODGE_DISTANCE * fixed_delta / DODGE_DURATION
+            self.player_logical_x += self.dodge_direction * dodge_step
+            self.dodge_elapsed += fixed_delta
+            if self.dodge_elapsed >= DODGE_DURATION - 1e-9:
+                self.dodge_direction = 0
+                self.dodge_elapsed = 0.0
+        else:
+            self.player_logical_x += move_direction * PLAYER_SPEED * fixed_delta
         self.player_logical_x = max(
             PLAYER_X_MIN,
             min(self.player_logical_x, PLAYER_X_MAX),
