@@ -57,6 +57,10 @@ DODGE_DURATION = 0.35
 DODGE_DISTANCE = 160
 DODGE_INVULNERABLE_DURATION = 0.2
 DODGE_COOLDOWN = 0.5
+BOSS_LOGICAL_X = PLAYER_LOGICAL_WIDTH / 2
+BOSS_HITBOX_HALF_WIDTH = 35
+BASIC_ATTACK_DURATION = 0.25
+BASIC_ATTACK_REACH = 120
 
 
 def set_draw_color(name):
@@ -189,10 +193,10 @@ def draw_perspective_rails():
     )
 
 
-def draw_boss_marker():
+def draw_boss_marker(hit=False):
     set_draw_color("actor_dark")
     draw_filled_circle(640, 480, 38)
-    set_draw_color("accent")
+    set_draw_color("accent_light" if hit else "accent")
     draw_filled_circle(640, 480, 28)
     set_draw_color("actor_dark")
     draw_filled_circle(640, 480, 20)
@@ -278,6 +282,11 @@ class ArenaScene:
         self.dodge_elapsed = 0.0
         self.dodge_cooldown = 0.0
         self.invulnerability_timer = 0.0
+        self.attack_type = None
+        self.attack_elapsed = 0.0
+        self.attack_hit_registered = False
+        self.successful_hits = 0
+        self.boss_hit_timer = 0.0
 
     def enter(self):
         pass
@@ -297,11 +306,13 @@ class ArenaScene:
                     else "platform_1"
                 )
                 self.start_lane_transition(target_lane)
+            elif event.key == pico2d.SDLK_j:
+                self.start_basic_attack()
         elif event.type == pico2d.SDL_KEYUP:
             self.pressed_keys.discard(event.key)
 
     def start_lane_transition(self, target_lane):
-        if self.dodge_direction != 0:
+        if self.dodge_direction != 0 or self.attack_type is not None:
             return
         if self.lane_transition_target is not None:
             return
@@ -315,7 +326,7 @@ class ArenaScene:
     def start_dodge(self):
         if self.dodge_direction != 0 or self.dodge_cooldown > 0:
             return
-        if self.lane_transition_target is not None:
+        if self.lane_transition_target is not None or self.attack_type is not None:
             return
 
         move_right = any(
@@ -330,7 +341,35 @@ class ArenaScene:
         self.dodge_cooldown = DODGE_COOLDOWN
         self.invulnerability_timer = DODGE_INVULNERABLE_DURATION
 
+    def start_basic_attack(self):
+        if self.player_lane != "platform_1":
+            return
+        if self.attack_type is not None or self.dodge_direction != 0:
+            return
+        if self.lane_transition_target is not None:
+            return
+
+        self.attack_type = "basic"
+        self.attack_elapsed = 0.0
+        self.attack_hit_registered = False
+
+    def resolve_basic_attack_hit(self):
+        if self.player_lane != "platform_1":
+            return False
+
+        if self.facing_direction > 0:
+            attack_left = self.player_logical_x
+            attack_right = self.player_logical_x + BASIC_ATTACK_REACH
+        else:
+            attack_left = self.player_logical_x - BASIC_ATTACK_REACH
+            attack_right = self.player_logical_x
+
+        boss_left = BOSS_LOGICAL_X - BOSS_HITBOX_HALF_WIDTH
+        boss_right = BOSS_LOGICAL_X + BOSS_HITBOX_HALF_WIDTH
+        return attack_left <= boss_right and attack_right >= boss_left
+
     def update(self, fixed_delta):
+        attack_locked = self.attack_type is not None
         move_right = any(
             key in self.pressed_keys for key in (pico2d.SDLK_RIGHT, pico2d.SDLK_d)
         )
@@ -346,7 +385,23 @@ class ArenaScene:
             0.0,
             self.invulnerability_timer - fixed_delta,
         )
-        if self.dodge_direction != 0:
+        self.boss_hit_timer = max(0.0, self.boss_hit_timer - fixed_delta)
+
+        if attack_locked:
+            self.attack_elapsed += fixed_delta
+            if (
+                not self.attack_hit_registered
+                and self.attack_elapsed >= BASIC_ATTACK_DURATION * 0.5
+            ):
+                if self.resolve_basic_attack_hit():
+                    self.successful_hits += 1
+                    self.boss_hit_timer = 0.12
+                self.attack_hit_registered = True
+            if self.attack_elapsed >= BASIC_ATTACK_DURATION - 1e-9:
+                self.attack_type = None
+                self.attack_elapsed = 0.0
+                self.attack_hit_registered = False
+        elif self.dodge_direction != 0:
             dodge_step = DODGE_DISTANCE * fixed_delta / DODGE_DURATION
             self.player_logical_x += self.dodge_direction * dodge_step
             self.dodge_elapsed += fixed_delta
@@ -376,7 +431,7 @@ class ArenaScene:
         draw_perspective_rails()
         draw_lane(LANES["platform_2"], "rear_lane", "rear_edge", 10)
         draw_lane(LANES["platform_1"], "front_lane", "front_edge", 8)
-        draw_boss_marker()
+        draw_boss_marker(self.boss_hit_timer > 0)
 
         lane = LANES[self.player_lane]
         player_y = lane["center_y"]
@@ -400,3 +455,15 @@ class ArenaScene:
             lane_right - lane_left
         ) / PLAYER_LOGICAL_WIDTH
         draw_player_placeholder(screen_x, player_y, player_scale)
+
+        if self.attack_type == "basic":
+            set_draw_color("accent_light")
+            slash_start_x = screen_x + self.facing_direction * 12 * player_scale
+            slash_end_x = screen_x + self.facing_direction * 48 * player_scale
+            slash_y = player_y + 38 * player_scale
+            draw_line(
+                slash_start_x,
+                slash_y - 10 * player_scale,
+                slash_end_x,
+                slash_y + 12 * player_scale,
+            )
