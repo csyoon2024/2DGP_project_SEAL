@@ -291,6 +291,7 @@ class ArenaScene:
         self.successful_hits = 0
         self.boss_hit_timer = 0.0
         self.debug_panel_visible = False
+        self.debug_hitboxes_visible = False
         self.debug_font = None
 
     def enter(self):
@@ -304,6 +305,8 @@ class ArenaScene:
             self.pressed_keys.add(event.key)
             if event.key == pico2d.SDLK_F1:
                 self.debug_panel_visible = not self.debug_panel_visible
+            elif event.key == pico2d.SDLK_F2:
+                self.debug_hitboxes_visible = not self.debug_hitboxes_visible
             elif event.key == pico2d.SDLK_SPACE:
                 self.start_dodge()
             elif event.key in (pico2d.SDLK_LSHIFT, pico2d.SDLK_RSHIFT):
@@ -484,6 +487,42 @@ class ArenaScene:
                     slash_end_x,
                     slash_y + 12 * player_scale + slash_offset,
                 )
+
+        if self.debug_hitboxes_visible:
+            set_draw_color("accent_light")
+            draw_rectangle(
+                screen_x - 25 * player_scale,
+                player_y,
+                screen_x + 25 * player_scale,
+                player_y + 90 * player_scale,
+            )
+
+            if self.player_lane == "platform_1":
+                platform_scale = (lane_right - lane_left) / PLAYER_LOGICAL_WIDTH
+                boss_screen_x = lane_left + BOSS_LOGICAL_X * platform_scale
+                boss_half_width = BOSS_HITBOX_HALF_WIDTH * platform_scale
+                set_draw_color("accent")
+                draw_rectangle(
+                    boss_screen_x - boss_half_width,
+                    435,
+                    boss_screen_x + boss_half_width,
+                    525,
+                )
+
+                if self.attack_type is not None:
+                    if self.facing_direction > 0:
+                        attack_left = self.player_logical_x
+                        attack_right = self.player_logical_x + BASIC_ATTACK_REACH
+                    else:
+                        attack_left = self.player_logical_x - BASIC_ATTACK_REACH
+                        attack_right = self.player_logical_x
+                    set_draw_color("accent_light")
+                    draw_rectangle(
+                        lane_left + attack_left * platform_scale,
+                        player_y + 20 * player_scale,
+                        lane_left + attack_right * platform_scale,
+                        player_y + 70 * player_scale,
+                    )
 
         if self.debug_panel_visible:
             self.draw_debug_panel()
