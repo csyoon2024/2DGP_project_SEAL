@@ -323,7 +323,7 @@ def draw_player_placeholder(screen_x, foot_y, scale):
 class ArenaScene:
     def __init__(self):
         self.player_lane = "platform_1"
-        self.player_logical_x = 240
+        self.player_logical_x = 310
         self.pressed_keys = set()
         self.lane_switch_cooldown = 0.0
         self.lane_transition_target = None
@@ -432,7 +432,7 @@ class ArenaScene:
 
     def reset_player(self):
         self.player_lane = "platform_1"
-        self.player_logical_x = 240
+        self.player_logical_x = 310
         self.pressed_keys.clear()
         self.lane_switch_cooldown = 0.0
         self.lane_transition_target = None
@@ -715,18 +715,29 @@ class ArenaScene:
 
         if self.attack_type is not None:
             set_draw_color("accent_light")
-            slash_start_x = screen_x + self.facing_direction * 12 * player_scale
-            slash_end_x = screen_x + self.facing_direction * 48 * player_scale
-            slash_y = player_y + 38 * player_scale
-            slash_count = 2 if self.attack_type == "heavy" else 1
-            for slash_index in range(slash_count):
-                slash_offset = slash_index * 7 * player_scale
+            attack_duration = (
+                BASIC_ATTACK_DURATION
+                if self.attack_type == "basic"
+                else HEAVY_ATTACK_DURATION
+            )
+            attack_progress = min(self.attack_elapsed / attack_duration, 1.0)
+            reach_progress = 0.25 + 0.75 * attack_progress
+            platform_scale = (lane_right - lane_left) / PLAYER_LOGICAL_WIDTH
+            slash_start_x = screen_x + self.facing_direction * 8 * player_scale
+            slash_end_x = screen_x + self.facing_direction * (
+                BASIC_ATTACK_REACH * platform_scale * reach_progress
+            )
+            slash_y = player_y + 48 * player_scale
+            slash_offsets = (-14, -7, 0, 7, 14) if self.attack_type == "heavy" else (-7, 0, 7)
+            for slash_offset in slash_offsets:
+                scaled_offset = slash_offset * player_scale
                 draw_line(
                     slash_start_x,
-                    slash_y - 10 * player_scale + slash_offset,
+                    slash_y - 22 * player_scale + scaled_offset,
                     slash_end_x,
-                    slash_y + 12 * player_scale + slash_offset,
+                    slash_y + 22 * player_scale + scaled_offset,
                 )
+            draw_filled_circle(slash_end_x, slash_y, 5 * player_scale)
 
         if self.debug_hitboxes_visible:
             set_draw_color("accent_light")
