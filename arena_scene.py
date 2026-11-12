@@ -9,6 +9,7 @@ from pico2d import (
     draw_line as pico_draw_line,
     draw_rectangle as pico_draw_rectangle,
 )
+from boss import BossAttack, BossController, PATTERNS
 
 
 WIDTH = 1280
@@ -297,6 +298,8 @@ class ArenaScene:
         self.boss_hit_timer = 0.0
         self.player_health = PLAYER_MAX_HEALTH
         self.seal_gauge = SealGauge()
+        self.boss = BossController()
+        self.boss_phase = 1
         self.debug_panel_visible = False
         self.debug_hitboxes_visible = False
         self.debug_invulnerability_enabled = False
@@ -524,6 +527,48 @@ class ArenaScene:
                 self.lane_transition_target = None
                 self.lane_transition_elapsed = 0.0
 
+        phase_jump = self.consume_debug_phase_jump()
+        if phase_jump is not None:
+            self.boss_phase = phase_jump
+            self.debug_phase = phase_jump
+
+        forced_pattern = None
+        if self.boss.state == "rest" and self.boss.timer <= fixed_delta:
+            forced_pattern = self.consume_debug_forced_pattern()
+        boss_attacks = self.boss.update(
+            fixed_delta,
+            self.boss_phase,
+            self.player_lane,
+            self.player_logical_x,
+            self.debug_pattern_rng,
+            forced_pattern,
+        )
+        for boss_attack in boss_attacks:
+            self.resolve_boss_attack(boss_attack)
+
+    def resolve_boss_attack(self, attack):
+        if self.debug_invulnerability_enabled or self.invulnerability_timer > 0:
+            return False
+        if self.player_health <= 0:
+            return False
+
+        if attack.kind == "lane":
+            overlaps = self.player_lane == attack.target_lane
+        else:
+            lane_matches = (
+                attack.kind == "piercing"
+                or self.player_lane == attack.target_lane
+            )
+            target_x = attack.target_x if attack.target_x is not None else BOSS_LOGICAL_X
+            hitbox_half_width = (attack.hitbox_width or 0) * 0.5
+            overlaps = lane_matches and abs(self.player_logical_x - target_x) <= (
+                hitbox_half_width + 25
+            )
+
+        if overlaps:
+            return self.receive_player_hit()
+        return False
+
     def draw(self):
         draw_room()
         draw_perspective_rails()
@@ -531,6 +576,7 @@ class ArenaScene:
         draw_lane(LANES["platform_1"], "front_lane", "front_edge", 8)
         draw_boss_marker(self.boss_hit_timer > 0)
         self.draw_seal_gauge()
+        self.draw_boss_telegraph()
 
         lane = LANES[self.player_lane]
         player_y = lane["center_y"]
@@ -681,3 +727,40 @@ class ArenaScene:
             threshold_x = gauge_inner_left + gauge_width * (1.0 - gauge_threshold)
             draw_line(threshold_x, gauge_bottom, threshold_x, gauge_top)
         draw_rectangle(gauge_left, gauge_bottom, gauge_right, gauge_top)
+
+    def draw_boss_telegraph(self):
+        if self.boss.state != "telegraph" or self.boss.current_pattern is None:
+            return
+
+        pattern = PATTERNS[self.boss.current_pattern]
+        if pattern["kind"] == "lane":
+            target_lane = LANES[self.boss.target_lane]
+            set_draw_color("accent_light")
+            draw_rectangle(
+                target_lane["left"],
+                target_lane["bottom"],
+                target_lane["right"],
+                target_lane["top"],
+            )
+            return
+
+        if self.boss.current_pattern in ("slam", "double_slam"):
+            target_lane = LANES["platform_1"]
+            target_x = BOSS_LOGICAL_X
+        else:
+            target_lane = LANES[self.boss.target_lane]
+            target_x = self.boss.target_x or BOSS_LOGICAL_X
+
+        screen_x = target_lane["left"] + target_x * (
+            target_lane["right"] - target_lane["left"]
+        ) / PLAYER_LOGICAL_WIDTH
+        radius = max(8, int((pattern["hitbox_width"] or 80) * 0.5))
+        set_draw_color("accent_light")
+        draw_filled_circle(screen_x, target_lane["center_y"], radius)
+
+        if pattern["kind"] == "piercing":
+            rear_lane = LANES["platform_2"]
+            rear_x = rear_lane["left"] + target_x * (
+                rear_lane["right"] - rear_lane["left"]
+            ) / PLAYER_LOGICAL_WIDTH
+            draw_filled_circle(rear_x, rear_lane["center_y"], radius)
