@@ -1,4 +1,5 @@
 import os
+import random
 
 import pico2d
 
@@ -65,6 +66,8 @@ BASIC_ATTACK_DURATION = 0.25
 BASIC_ATTACK_REACH = 120
 HEAVY_ATTACK_DURATION = 0.70
 PLAYER_MAX_HEALTH = 3
+DEBUG_GAUGE_STEP = 0.05
+DEBUG_BOSS_PATTERNS = ("slam", "charge", "shockwave", "missile", "double_slam")
 
 
 def set_draw_color(name):
@@ -295,6 +298,13 @@ class ArenaScene:
         self.debug_panel_visible = False
         self.debug_hitboxes_visible = False
         self.debug_invulnerability_enabled = False
+        self.debug_phase = 1
+        self.debug_phase_jump_request = None
+        self.debug_seal_gauge = 0.5
+        self.debug_forced_pattern = None
+        self.debug_pattern_seed_fixed = False
+        self.debug_pattern_seed = 1
+        self.debug_pattern_rng = random.Random()
         self.debug_font = None
 
     def enter(self):
@@ -316,6 +326,29 @@ class ArenaScene:
                 )
             elif event.key == pico2d.SDLK_F4:
                 self.reset_player()
+            elif event.key == pico2d.SDLK_F5:
+                self.debug_phase = 2 if self.debug_phase == 1 else 1
+                self.debug_phase_jump_request = self.debug_phase
+            elif event.key == pico2d.SDLK_LEFTBRACKET:
+                self.debug_seal_gauge = max(
+                    0.0,
+                    self.debug_seal_gauge - DEBUG_GAUGE_STEP,
+                )
+            elif event.key == pico2d.SDLK_RIGHTBRACKET:
+                self.debug_seal_gauge = min(
+                    1.0,
+                    self.debug_seal_gauge + DEBUG_GAUGE_STEP,
+                )
+            elif event.key == pico2d.SDLK_F6:
+                pattern_index = DEBUG_BOSS_PATTERNS.index(self.debug_forced_pattern) + 1 if self.debug_forced_pattern in DEBUG_BOSS_PATTERNS else 0
+                self.debug_forced_pattern = DEBUG_BOSS_PATTERNS[
+                    pattern_index % len(DEBUG_BOSS_PATTERNS)
+                ]
+            elif event.key == pico2d.SDLK_F7:
+                self.debug_pattern_seed_fixed = not self.debug_pattern_seed_fixed
+                self.debug_pattern_rng = random.Random(
+                    self.debug_pattern_seed if self.debug_pattern_seed_fixed else None
+                )
             elif event.key == pico2d.SDLK_h and self.debug_panel_visible:
                 self.receive_player_hit()
             elif event.key == pico2d.SDLK_SPACE:
@@ -369,6 +402,16 @@ class ArenaScene:
             return False
         self.player_health -= 1
         return True
+
+    def consume_debug_phase_jump(self):
+        phase = self.debug_phase_jump_request
+        self.debug_phase_jump_request = None
+        return phase
+
+    def consume_debug_forced_pattern(self):
+        pattern = self.debug_forced_pattern
+        self.debug_forced_pattern = None
+        return pattern
 
     def start_dodge(self):
         if self.dodge_direction != 0 or self.dodge_cooldown > 0:
@@ -564,9 +607,9 @@ class ArenaScene:
 
     def draw_debug_panel(self):
         set_draw_color("actor_dark")
-        draw_filled_rectangle(20, 492, 405, 700)
+        draw_filled_rectangle(20, 390, 430, 700)
         set_draw_color("rear_edge")
-        draw_rectangle(20, 492, 405, 700)
+        draw_rectangle(20, 390, 430, 700)
 
         if self.debug_font is None:
             font_path = os.path.join(
@@ -588,11 +631,15 @@ class ArenaScene:
             f"HEALTH     {self.player_health}/{PLAYER_MAX_HEALTH}",
             f"INVULN     {'ON' if self.debug_invulnerability_enabled else f'{self.invulnerability_timer:4.2f}s'}",
             f"HITS       {self.successful_hits}",
+            f"PHASE      {self.debug_phase}  [F5 jump]",
+            f"GAUGE      {self.debug_seal_gauge:4.0%}  [[ / ] adjust]",
+            f"PATTERN    {self.debug_forced_pattern or '-'}  [F6 cycle]",
+            f"SEED       {'FIXED ' + str(self.debug_pattern_seed) if self.debug_pattern_seed_fixed else 'RANDOM'}  [F7]",
         )
         for line_index, text in enumerate(status_lines):
             self.debug_font.draw(
                 36,
-                676 - line_index * 25,
+                676 - line_index * 26,
                 text,
                 (221, 235, 220),
             )
