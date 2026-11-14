@@ -631,7 +631,7 @@ class ArenaScene:
         phase = self.boss_phase
         self.player_health = PLAYER_MAX_HEALTH
         self.player_lane = "platform_1"
-        self.player_logical_x = 240
+        self.player_logical_x = 310
         self.pressed_keys.clear()
         self.dodge_direction = 0
         self.dodge_elapsed = 0.0
