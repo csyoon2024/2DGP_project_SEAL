@@ -720,24 +720,28 @@ class ArenaScene:
                 if self.attack_type == "basic"
                 else HEAVY_ATTACK_DURATION
             )
-            attack_progress = min(self.attack_elapsed / attack_duration, 1.0)
-            reach_progress = 0.25 + 0.75 * attack_progress
+            reach_progress = min(self.attack_elapsed / (attack_duration * 0.45), 1.0)
             platform_scale = (lane_right - lane_left) / PLAYER_LOGICAL_WIDTH
             slash_start_x = screen_x + self.facing_direction * 8 * player_scale
             slash_end_x = screen_x + self.facing_direction * (
                 BASIC_ATTACK_REACH * platform_scale * reach_progress
             )
-            slash_y = player_y + 48 * player_scale
-            slash_offsets = (-14, -7, 0, 7, 14) if self.attack_type == "heavy" else (-7, 0, 7)
+            slash_start_y = player_y + 24 * player_scale
+            slash_end_y = player_y + 205 * reach_progress
+            slash_offsets = (
+                (-18, -9, 0, 9, 18)
+                if self.attack_type == "heavy"
+                else (-9, 0, 9)
+            )
             for slash_offset in slash_offsets:
                 scaled_offset = slash_offset * player_scale
                 draw_line(
                     slash_start_x,
-                    slash_y - 22 * player_scale + scaled_offset,
+                    slash_start_y + scaled_offset,
                     slash_end_x,
-                    slash_y + 22 * player_scale + scaled_offset,
+                    slash_end_y + scaled_offset,
                 )
-            draw_filled_circle(slash_end_x, slash_y, 5 * player_scale)
+            draw_filled_circle(slash_end_x, slash_end_y, 8 * player_scale)
 
         if self.debug_hitboxes_visible:
             set_draw_color("accent_light")
