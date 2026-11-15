@@ -95,18 +95,27 @@ BOSS_CHARGE_DEPTH = 0.64
 # 높이 90 → 60: 카메라를 낮춘 만큼 단상도 낮춰 보스를 화면 중앙에 둔다.
 # 앞 깊이 0.64: 돌진 끝(BOSS_CHARGE_DEPTH)과 같은 깊이 — 보스가 단상 앞 끝까지 나온다.
 # 맨 윗단 뒤 깊이 = BOSS_DEPTH: 보스가 윗단 뒤 가장자리에서 솟아난다.
+# 맨 아랫단 반폭 340 → 740: 돌진은 플레이어 x(논리 25~875, 월드 ±557)로 보스를 옮긴다.
+#   반폭 340이면 보스가 단상 옆 허공으로 나갔다. 돌진 끝 흙더미 반폭(≈157)까지 더해
+#   557 + 157 = 714 < 윗면 반폭 722 (옆벽 760 안쪽)
 PEDESTAL_TIERS = (
-    (0.640, 0.530, 340, 20, 18),
-    (0.605, 0.540, 270, 40, 16),
-    (0.570, 0.550, 200, 60, 14),
+    (0.640, 0.530, 740, 20, 18),
+    # 위 두 단 반폭 270 → 300, 200 → 230: 각성 보스의 흙더미(반폭 ≈ 190)가 맨 윗단(윗면 반폭 186)
+    #   밖으로 삐져나왔다. 윗면 반폭 216으로 넓혀 각성 상태에서도 단 위에 놓이게 한다
+    (0.605, 0.540, 300, 40, 16),
+    (0.570, 0.550, 230, 60, 14),
 )
 PEDESTAL_TOP_ELEVATION = PEDESTAL_TIERS[-1][3]
+# 돌진 끝(BOSS_CHARGE_DEPTH = 맨 아랫단 앞 모서리)에서 보스가 묻히는 높이
+BOSS_CHARGE_ELEVATION = PEDESTAL_TIERS[0][3]
 # 0 → -140: 플랫폼을 화면 하단으로 내리면서 앞줄 먼 모서리(y≈162)와 단상 사이가 벌어졌다.
 #   맨 아랫단을 보이드 아래로 늘려 밑동(583 - 660 * 0.64 ≈ 161)이 앞줄 뒤에 숨게 한다
 PEDESTAL_BASE_ELEVATION = -140
 
 # 좌우 벽 기둥 — 레인과 겹치지 않는 깊이(레인 사이, 단상 옆, 뒷벽 앞)에 둔다
-PILLAR_DEPTHS = (0.46, 0.62, 0.86)
+# 가운데 기둥 0.62 → 0.70, 앞 기둥 0.86 → 0.90: 넓힌 단상 맨 아랫단(깊이 0.53~0.64,
+#   반폭 720)과 0.62 기둥이 겹쳤다. 단상 앞(0.64)보다 앞으로 옮기고 간격을 맞췄다
+PILLAR_DEPTHS = (0.46, 0.70, 0.90)
 PILLAR_INNER_X = 660
 PILLAR_OUTER_X = 750
 PILLAR_THICKNESS = 0.14  # 깊이 방향 두께 (1/s 단위)
@@ -174,10 +183,59 @@ def lane_quad(lane_name, logical_left=0, logical_right=PLAYER_LOGICAL_WIDTH):
     )
 
 
-def boss_anchor(position_x, forward_progress):
-    """보스 발치(매몰선)의 화면 좌표와 깊이. 보스는 단상 꼭대기에 묻혀 있다."""
+def pedestal_surface_elevation(world_x, depth):
+    """(world_x, depth) 바로 아래 단상 윗면 높이. 단상 밖이면 None."""
+    surface = None
+    for front, back, half_width, elevation, batter in PEDESTAL_TIERS:
+        on_tier = back - 1e-9 <= depth <= front + 1e-9
+        if on_tier and abs(world_x) <= half_width - batter + 1e-9:
+            surface = elevation if surface is None else max(surface, elevation)
+    return surface
+
+
+def boss_burial_elevation(world_x, depth, forward_progress, footprint_half=0.0):
+    """보스 매몰선의 높이.
+
+    예전에는 항상 맨 윗단 높이(60)였다. 돌진으로 깊이가 0.57을 넘으면 발밑은
+    아랫단(40, 20)인데 보스는 60에 떠 있었다. 이제 평시 60 → 돌진 끝 20으로
+    내려오되, 흙더미 폭(footprint_half) 아래 가장 낮은 단상 윗면보다 절대 높지
+    않게 한다. 낮은 것은 더 깊이 묻힌 것이라 괜찮고, 높은 것은 허공에 뜬 것이다.
+    """
+    elevation = PEDESTAL_TOP_ELEVATION + (
+        BOSS_CHARGE_ELEVATION - PEDESTAL_TOP_ELEVATION
+    ) * forward_progress
+    for sample_x in (world_x - footprint_half, world_x, world_x + footprint_half):
+        surface = pedestal_surface_elevation(sample_x, depth)
+        if surface is not None:
+            elevation = min(elevation, surface)
+    return elevation
+
+
+# 매몰선 흙더미의 반폭 (보스 배율 단위). draw_boss_placeholder와 boss_anchor가 같이 쓴다
+BOSS_MOUND_HALF_WIDTH = 66
+BOSS_BODY_OFFSET = 34
+BOSS_VISIBLE_HEIGHT = 214 - BOSS_BODY_OFFSET
+
+
+def boss_desired_scale(awakened, forward_progress):
+    """천장 제한 전 보스 배율. 각성 1.4배가 천장에 딱 맞도록 기본 배율을 정한다."""
+    awakening_scale = BossController.AWAKENING_SIZE_SCALE if awakened else 1.0
+    lunge_scale = 1.0 + (1.05 / 0.78 - 1.0) * forward_progress
+    home_base_scale = (BOSS_CEILING_Y - BOSS_HOME_BURIAL_Y) / (
+        BOSS_VISIBLE_HEIGHT * BossController.AWAKENING_SIZE_SCALE
+    )
+    return min(BOSS_DISPLAY_SCALE, home_base_scale) * max(awakening_scale, lunge_scale)
+
+
+def boss_anchor(position_x, forward_progress, awakened=False):
+    """보스 발치(매몰선)의 화면 좌표와 깊이. 보스는 발밑 단상 윗면에 묻혀 있다."""
     depth = BOSS_DEPTH + (BOSS_CHARGE_DEPTH - BOSS_DEPTH) * forward_progress
-    x, y = project(logical_to_world_x(position_x), depth, PEDESTAL_TOP_ELEVATION)
+    world_x = logical_to_world_x(position_x)
+    footprint_half = (
+        BOSS_MOUND_HALF_WIDTH * boss_desired_scale(awakened, forward_progress) / depth
+    )
+    elevation = boss_burial_elevation(world_x, depth, forward_progress, footprint_half)
+    x, y = project(world_x, depth, elevation)
     return x, y, depth
 
 
@@ -760,21 +818,14 @@ def draw_boss_placeholder(
     burial_y(매몰선)는 몸통이 땅에서 나오는 높이다. 그 아래(다리·발치 그림자,
     바닥에 박힌 손)는 클립해서 그리지 않는다.
     """
-    awakening_scale = BossController.AWAKENING_SIZE_SCALE if awakened else 1.0
-    lunge_scale = 1.0 + (1.05 / 0.78 - 1.0) * forward_progress
     # 몸통 밑변(발치 + 34)이 매몰선에 오도록 발치를 매몰선 아래에 둔다.
     # 보이는 높이는 몸통 밑변 ~ 뿔 끝 = 214 - 34 = 180 단위
-    body_offset = 34
-    visible_height = 214 - body_offset
+    body_offset = BOSS_BODY_OFFSET
+    visible_height = BOSS_VISIBLE_HEIGHT
     # 각성 시 매몰선을 40px 내리던 것을 없앴다: 위가 천장(615)에 막혀 아래로만 커지면서
     # 보스가 단상에서 43px 미끄러져 내려왔다. 이제 매몰선은 고정이고 보스는 위로만 커진다.
     # 기본 배율은 각성(1.4배)이 천장에 딱 맞도록 정한다 → 평시 ≈ 200px, 각성 ≈ 280px (PRD §2)
-    home_base_scale = (BOSS_CEILING_Y - BOSS_HOME_BURIAL_Y) / (
-        visible_height * BossController.AWAKENING_SIZE_SCALE
-    )
-    desired_scale = min(BOSS_DISPLAY_SCALE, home_base_scale) * max(
-        awakening_scale, lunge_scale
-    )
+    desired_scale = boss_desired_scale(awakened, forward_progress)
     max_visible_scale = (BOSS_CEILING_Y - burial_y) / visible_height
     scale = min(desired_scale, max_visible_scale)
     foot_y = burial_y - body_offset * scale
@@ -868,7 +919,7 @@ def draw_boss_placeholder(
 
     # 매몰선의 흙더미 — 잘린 단면 대신 몸이 땅에 박혀 있는 것처럼 보이게
     set_boss_color("shadow")
-    draw_filled_ellipse(center_x, burial_y, 66 * scale, 9 * scale)
+    draw_filled_ellipse(center_x, burial_y, BOSS_MOUND_HALF_WIDTH * scale, 9 * scale)
 
 
 def draw_player_placeholder(screen_x, foot_y, scale):
@@ -1354,6 +1405,7 @@ class ArenaScene:
         boss_screen_x, boss_foot_y, _ = boss_anchor(
             self.boss.position_x,
             self.boss.forward_progress,
+            self.boss.awakened,
         )
         draw_boss_placeholder(
             self.boss.awakened,
@@ -1611,6 +1663,7 @@ class ArenaScene:
         boss_screen_x, boss_foot_y, _ = boss_anchor(
             self.boss.position_x,
             self.boss.forward_progress,
+            self.boss.awakened,
         )
         launch_y = boss_foot_y + 220
         projectile_x = boss_screen_x + (target_x - boss_screen_x) * progress
@@ -1649,7 +1702,7 @@ class ArenaScene:
             front = LANES["platform_1"]
             gap_color = (255, 228, 196, round(160 * fade))
             for near_depth, near_elevation, far_depth, far_elevation, near_rgba, far_rgba in (
-                (front["far"], front["elevation"], BOSS_CHARGE_DEPTH, PEDESTAL_TOP_ELEVATION, far_color, far_color),
+                (front["far"], front["elevation"], BOSS_CHARGE_DEPTH, BOSS_CHARGE_ELEVATION, far_color, far_color),
                 (rear["far"], rear["elevation"], front["near"], front["elevation"], gap_color, gap_color),
             ):
                 draw_polygon(
