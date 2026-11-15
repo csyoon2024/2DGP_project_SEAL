@@ -88,6 +88,12 @@ PEDESTAL_TIERS = (
 )
 PEDESTAL_TOP_ELEVATION = PEDESTAL_TIERS[-1][3]
 
+# 좌우 벽 기둥 — 레인과 겹치지 않는 깊이(레인 사이, 단상 옆, 뒷벽 앞)에 둔다
+PILLAR_DEPTHS = (0.46, 0.62, 0.86)
+PILLAR_INNER_X = 660
+PILLAR_OUTER_X = 750
+PILLAR_THICKNESS = 0.14  # 깊이 방향 두께 (1/s 단위)
+
 LANES = {
     "platform_2": {
         "near": 1.10,
@@ -325,6 +331,95 @@ def draw_room():
             *project(side * ROOM_HALF_WIDTH, BACK_WALL_DEPTH, CEILING_HEIGHT),
         )
     draw_line(VANISHING_X - wall_half, wall_y, VANISHING_X + wall_half, wall_y)
+
+
+def draw_pillars():
+    """좌우 기둥. 먼 것부터 그린다. 앞면 + 안쪽 옆면 + 바닥 그림자."""
+    for depth in PILLAR_DEPTHS:
+        back_depth = 1.0 / (1.0 / depth + PILLAR_THICKNESS)
+        for side in (-1, 1):
+            inner = side * PILLAR_INNER_X
+            outer = side * PILLAR_OUTER_X
+            shadow_depth = depth * 1.10
+
+            # 바닥 그림자 — 뒤쪽 보스의 빛을 등지고 카메라 쪽으로 길게 눕는다
+            draw_polygon(
+                (
+                    project(outer, depth),
+                    project(inner, depth),
+                    project(inner + side * 30, shadow_depth),
+                    project(outer, shadow_depth),
+                ),
+                (
+                    (5, 6, 10, 170),
+                    (5, 6, 10, 170),
+                    (5, 6, 10, 0),
+                    (5, 6, 10, 0),
+                ),
+            )
+
+            # 안쪽 옆면 — 화면 중앙을 향한 면. 어둡고 깊이 쪽으로 더 어둡다
+            draw_polygon(
+                (
+                    project(inner, depth),
+                    project(inner, back_depth),
+                    project(inner, back_depth, CEILING_HEIGHT),
+                    project(inner, depth, CEILING_HEIGHT),
+                ),
+                (
+                    (24, 28, 40, 255),
+                    (14, 16, 24, 255),
+                    (8, 9, 14, 255),
+                    (12, 14, 20, 255),
+                ),
+            )
+
+            # 앞면 — 바닥 쪽이 밝고 위로 갈수록 어둠에 잠긴다
+            front_bottom = (40, 46, 63, 255)
+            front_top = (14, 16, 23, 255)
+            inner_bottom = project(inner, depth)
+            outer_bottom = project(outer, depth)
+            inner_top = project(inner, depth, CEILING_HEIGHT)
+            outer_top = project(outer, depth, CEILING_HEIGHT)
+            draw_polygon(
+                (inner_bottom, outer_bottom, outer_top, inner_top),
+                (front_bottom, front_bottom, front_top, front_top),
+            )
+
+            # 수직 그림자 — 앞면 바깥쪽 1/3을 벽 쪽 그늘로 덮는다
+            shade_edge = inner + (outer - inner) * 0.62
+            draw_polygon(
+                (
+                    project(shade_edge, depth),
+                    outer_bottom,
+                    outer_top,
+                    project(shade_edge, depth, CEILING_HEIGHT),
+                ),
+                (
+                    (5, 6, 10, 0),
+                    (5, 6, 10, 150),
+                    (5, 6, 10, 150),
+                    (5, 6, 10, 0),
+                ),
+            )
+
+            # 받침돌
+            plinth_height = 26
+            plinth_inner = inner - side * 10
+            plinth_depth = depth * 1.015
+            draw_polygon(
+                (
+                    project(plinth_inner, plinth_depth),
+                    project(outer, plinth_depth),
+                    project(outer, plinth_depth, plinth_height),
+                    project(plinth_inner, plinth_depth, plinth_height),
+                ),
+                ((30, 34, 47, 255), (22, 25, 35, 255), (44, 50, 68, 255), (54, 61, 82, 255)),
+            )
+
+            # 안쪽 모서리 빛
+            set_draw_rgb(70, 80, 106, 130)
+            draw_line(*inner_bottom, *inner_top)
 
 
 def draw_pedestal():
@@ -1053,6 +1148,7 @@ class ArenaScene:
             DRAW_OFFSET_Y = 0
 
         draw_room()
+        draw_pillars()
         draw_pedestal()
         boss_pose = "idle"
         if self.boss.current_pattern is not None:
