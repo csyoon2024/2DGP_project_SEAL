@@ -90,7 +90,7 @@ LANES = {
         "near": 0.78,
         "far": 0.645,
         "scale": 0.71,
-        "elevation": 40,
+        "elevation": 36,
     },
 }
 
@@ -322,6 +322,44 @@ def draw_lane(lane_name, fill_color, edge_color, tick_count, opacity=0.85, satur
     lane = LANES[lane_name]
     layer_alpha = round(255 * opacity)
     near_left, near_right, far_right, far_left = lane_quad(lane_name)
+    world_left = logical_to_world_x(0)
+    world_right = logical_to_world_x(PLAYER_LOGICAL_WIDTH)
+    base_left = project(world_left, lane["near"])
+    base_right = project(world_right, lane["near"])
+
+    # 바닥에 떨어지는 그림자 — 앞면 밑동에서 카메라 쪽으로 번진다
+    shadow_depth = lane["near"] * 1.08
+    shadow_spread = 24
+    shadow_dark = (6, 7, 11, 150)
+    shadow_clear = (6, 7, 11, 0)
+    draw_polygon(
+        (
+            project(world_left - shadow_spread, shadow_depth),
+            project(world_right + shadow_spread, shadow_depth),
+            base_right,
+            base_left,
+        ),
+        (shadow_clear, shadow_clear, shadow_dark, shadow_dark),
+    )
+
+    # 앞면(두께) — 윗면보다 어두운 같은 색, 아래로 갈수록 더 어둡다
+    set_draw_color(fill_color, 255, saturation)
+    fill_rgb = active_color[:3]
+    set_draw_color(edge_color, 255, saturation)
+    edge_rgb = active_color[:3]
+    side_rgb = tuple(
+        fill * 0.8 + edge * 0.2 for fill, edge in zip(fill_rgb, edge_rgb)
+    )
+    side_top = tuple(round(channel * 0.95) for channel in side_rgb) + (255,)
+    side_bottom = tuple(round(channel * 0.6) for channel in side_rgb) + (255,)
+    draw_polygon(
+        (base_left, base_right, near_right, near_left),
+        (side_bottom, side_bottom, side_top, side_top),
+    )
+    set_draw_color(edge_color, 70, saturation)
+    draw_line(*base_left, *base_right)
+    draw_line(*base_left, *near_left)
+    draw_line(*base_right, *near_right)
 
     # 윗면 — 카메라 쪽이 조금 더 밝다
     set_draw_color(fill_color, layer_alpha, saturation)
