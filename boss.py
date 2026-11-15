@@ -11,8 +11,8 @@ PHASE_PATTERNS = {
         "slam": 35,
         "charge": 20,
         "shockwave": 20,
-        "missile": 15,
-        "double_slam": 10,
+        "homing": 15,
+        "slam_double": 10,
     },
 }
 
@@ -24,6 +24,11 @@ PATTERNS = {
         "recovery": 0.40,
         "hitbox_width": 80,
         "hit_times": (0.0,),
+        "telegraph_blink": (0.20, 0.15),
+        "aim": "player_x",
+        "marker": "spot",
+        "pose": "slam",
+        "shake": (6, 0.12),
     },
     "charge": {
         "kind": "piercing",
@@ -32,6 +37,11 @@ PATTERNS = {
         "recovery": 1.00,
         "hitbox_width": 60,
         "hit_times": (0.0,),
+        "telegraph_blink": (0.25, 0.20, 0.15, 0.10),
+        "aim": "player_x",
+        "marker": "column",
+        "pose": "charge",
+        "shake": (12, 0.25),
     },
     "shockwave": {
         "kind": "lane",
@@ -40,22 +50,37 @@ PATTERNS = {
         "recovery": 0.50,
         "hitbox_width": None,
         "hit_times": (0.0,),
+        "telegraph_blink": (0.30, 0.25, 0.20, 0.15, 0.10),
+        "aim": "player_lane",
+        "marker": "lane",
+        "pose": "shockwave",
+        "shake": (10, 0.20),
     },
-    "missile": {
-        "kind": "tracking",
+    "homing": {
+        "kind": "homing",
         "telegraph": 0.80,
         "duration": 0.30,
         "recovery": 0.40,
         "hitbox_width": 50,
-        "hit_times": (0.0,),
+        "hit_times": (0.30,),
+        "telegraph_blink": (0.30, 0.20, 0.15, 0.15),
+        "aim": "track",
+        "marker": "spot",
+        "pose": "homing",
+        "shake": (6, 0.10),
     },
-    "double_slam": {
+    "slam_double": {
         "kind": "front",
         "telegraph": 0.35,
         "duration": 0.45,
         "recovery": 0.50,
         "hitbox_width": 80,
-        "hit_times": (0.0, 0.225),
+        "hit_times": (0.0, 0.30),
+        "telegraph_blink": (0.20, 0.15),
+        "aim": "player_x",
+        "marker": "two_spots",
+        "pose": "slam_double",
+        "shake": (8, 0.12),
     },
 }
 
@@ -90,6 +115,8 @@ class BossController:
         self.target_x = None
         self.attack_elapsed = 0.0
         self.next_hit_index = 0
+        self.telegraph_elapsed = 0.0
+        self.secondary_target_x = None
 
     def begin_awakening_demo(self):
         self.awakened = True
@@ -120,6 +147,7 @@ class BossController:
 
         if self.state == "telegraph":
             self.timer -= fixed_delta
+            self.telegraph_elapsed += fixed_delta
             if self.timer <= 1e-9:
                 self.state = "active"
                 self.timer = PATTERNS[self.current_pattern]["duration"]
@@ -131,6 +159,9 @@ class BossController:
         if self.state == "active":
             self.timer -= fixed_delta
             self.attack_elapsed += fixed_delta
+            if self.current_pattern == "homing":
+                self.target_lane = player_lane
+                self.target_x = player_x
             attacks.extend(self._collect_attacks(self.attack_elapsed))
             if self.timer <= 1e-9:
                 self.state = "recovery"
@@ -166,17 +197,41 @@ class BossController:
             )[0]
 
         self.current_pattern = pattern
-        self.target_x = player_x if pattern == "missile" else None
-        if pattern in ("slam", "double_slam"):
+        self.target_x = None
+        self.secondary_target_x = None
+        if pattern in ("slam", "slam_double"):
+            self.target_x = player_x
             self.target_lane = "platform_1"
+        elif pattern == "charge":
+            self.target_x = player_x
+            self.target_lane = None
         elif pattern == "shockwave":
-            self.target_lane = rng.choice(("platform_1", "platform_2"))
-        elif pattern == "missile":
             self.target_lane = player_lane
+        elif pattern == "homing":
+            self.target_lane = player_lane
+            self.target_x = player_x
         else:
             self.target_lane = None
+        if pattern == "slam_double":
+            second_direction = rng.choice((-1, 1))
+            if not 0 <= player_x + second_direction * 180 <= 900:
+                second_direction *= -1
+            self.secondary_target_x = player_x + second_direction * 180
         self.state = "telegraph"
         self.timer = PATTERNS[pattern]["telegraph"]
+        self.telegraph_elapsed = 0.0
+
+    def telegraph_is_visible(self):
+        if self.state != "telegraph" or self.current_pattern is None:
+            return False
+
+        intervals = PATTERNS[self.current_pattern]["telegraph_blink"]
+        elapsed = min(self.telegraph_elapsed, sum(intervals))
+        for interval_index, interval_duration in enumerate(intervals):
+            if elapsed < interval_duration:
+                return interval_index == len(intervals) - 1 or interval_index % 2 == 1
+            elapsed -= interval_duration
+        return True
 
     def _collect_attacks(self, elapsed):
         pattern = PATTERNS[self.current_pattern]
@@ -186,12 +241,17 @@ class BossController:
             self.next_hit_index < len(hit_times)
             and elapsed + 1e-9 >= hit_times[self.next_hit_index]
         ):
+            target_x = self.target_x
+            target_lane = self.target_lane
+            if self.current_pattern == "slam_double" and self.next_hit_index == 1:
+                target_x = self.secondary_target_x
+                target_lane = "platform_1"
             attacks.append(
                 BossAttack(
                     pattern=self.current_pattern,
                     kind=pattern["kind"],
-                    target_lane=self.target_lane,
-                    target_x=self.target_x,
+                    target_lane=target_lane,
+                    target_x=target_x,
                     hitbox_width=pattern["hitbox_width"],
                 )
             )
