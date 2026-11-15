@@ -79,6 +79,15 @@ CEILING_HEIGHT = 1100
 BOSS_DEPTH = 0.50
 BOSS_CHARGE_DEPTH = 0.60
 
+# 보스 단상 — 3단. 위로 갈수록 좁고 얕아진다.
+# (앞 깊이, 뒤 깊이, 아랫단 반폭, 윗면 높이, 옆면 경사폭)
+PEDESTAL_TIERS = (
+    (0.600, 0.440, 340, 30, 18),
+    (0.565, 0.450, 270, 60, 16),
+    (0.535, 0.460, 200, 90, 14),
+)
+PEDESTAL_TOP_ELEVATION = PEDESTAL_TIERS[-1][3]
+
 LANES = {
     "platform_2": {
         "near": 1.10,
@@ -132,9 +141,9 @@ def lane_quad(lane_name, logical_left=0, logical_right=PLAYER_LOGICAL_WIDTH):
 
 
 def boss_anchor(position_x, forward_progress):
-    """보스 발치(매몰선)의 화면 좌표와 깊이."""
+    """보스 발치(매몰선)의 화면 좌표와 깊이. 보스는 단상 꼭대기에 묻혀 있다."""
     depth = BOSS_DEPTH + (BOSS_CHARGE_DEPTH - BOSS_DEPTH) * forward_progress
-    x, y = project(logical_to_world_x(position_x), depth)
+    x, y = project(logical_to_world_x(position_x), depth, PEDESTAL_TOP_ELEVATION)
     return x, y, depth
 
 
@@ -318,7 +327,88 @@ def draw_room():
     draw_line(VANISHING_X - wall_half, wall_y, VANISHING_X + wall_half, wall_y)
 
 
-def draw_lane(lane_name, fill_color, edge_color, tick_count, opacity=0.85, saturation=0.7):
+def draw_pedestal():
+    """보스 단상. 아랫단부터 그려야 윗단이 아랫단 윗면을 올바르게 가린다.
+
+    카메라가 단상 정중앙 앞에 있으므로 수직 옆면은 보이지 않는다.
+    옆면을 안쪽으로 기울여(경사) 위를 향하게 만들어 측면이 보이게 한다.
+    """
+    previous_elevation = 0
+    for tier_index, (front, back, half_width, elevation, batter) in enumerate(
+        PEDESTAL_TIERS
+    ):
+        top_half = half_width - batter
+        light = 1.0 - 0.12 * tier_index
+
+        def shade(rgb, factor):
+            return tuple(round(channel * factor * light) for channel in rgb) + (255,)
+
+        # 앞면 — 아랫변이 넓고 윗변이 좁은 사다리꼴
+        front_bottom_left = project(-half_width, front, previous_elevation)
+        front_bottom_right = project(half_width, front, previous_elevation)
+        front_top_right = project(top_half, front, elevation)
+        front_top_left = project(-top_half, front, elevation)
+        back_top_right = project(top_half, back, elevation)
+        back_top_left = project(-top_half, back, elevation)
+        back_bottom_right = project(half_width, back, previous_elevation)
+        back_bottom_left = project(-half_width, back, previous_elevation)
+
+        # 옆면 — 경사가 위를 향해 카메라에 보인다. 앞면보다 어둡다
+        side_near = shade((40, 46, 64), 0.85)
+        side_far = shade((40, 46, 64), 0.55)
+        draw_polygon(
+            (front_bottom_left, front_top_left, back_top_left, back_bottom_left),
+            (side_near, side_near, side_far, side_far),
+        )
+        draw_polygon(
+            (front_bottom_right, back_bottom_right, back_top_right, front_top_right),
+            (side_near, side_far, side_far, side_near),
+        )
+
+        # 윗면 — 가장 밝다
+        top_near = shade((52, 59, 80), 1.0)
+        top_far = shade((52, 59, 80), 0.7)
+        draw_polygon(
+            (front_top_left, front_top_right, back_top_right, back_top_left),
+            (top_near, top_near, top_far, top_far),
+        )
+
+        # 앞면
+        face_top = shade((34, 39, 55), 1.0)
+        face_bottom = shade((34, 39, 55), 0.6)
+        draw_polygon(
+            (front_bottom_left, front_bottom_right, front_top_right, front_top_left),
+            (face_bottom, face_bottom, face_top, face_top),
+        )
+
+        # 모서리 — 윗면 앞 모서리에 빛, 보스 쪽 붉은 기운
+        set_draw_rgb(96, 108, 140, 150)
+        draw_line(*front_top_left, *front_top_right)
+        set_draw_rgb(70, 80, 106, 110)
+        draw_line(*front_bottom_left, *front_top_left)
+        draw_line(*front_bottom_right, *front_top_right)
+        set_draw_color("accent", 40 + 25 * tier_index)
+        draw_line(
+            *project(-top_half * 0.6, front, elevation - 6),
+            *project(top_half * 0.6, front, elevation - 6),
+        )
+        previous_elevation = elevation
+
+    # 단상이 바닥에 드리우는 접지 그림자
+    front, _, half_width, _, _ = PEDESTAL_TIERS[0]
+    set_draw_rgb(6, 7, 11, 120)
+    draw_polygon(
+        (
+            project(-half_width - 20, front * 1.03),
+            project(half_width + 20, front * 1.03),
+            project(half_width, front),
+            project(-half_width, front),
+        ),
+        ((6, 7, 11, 0), (6, 7, 11, 0), (6, 7, 11, 140), (6, 7, 11, 140)),
+    )
+
+
+def draw_lane(lane_name,fill_color, edge_color, tick_count, opacity=0.85, saturation=0.7):
     lane = LANES[lane_name]
     layer_alpha = round(255 * opacity)
     near_left, near_right, far_right, far_left = lane_quad(lane_name)
@@ -963,6 +1053,7 @@ class ArenaScene:
             DRAW_OFFSET_Y = 0
 
         draw_room()
+        draw_pedestal()
         boss_pose = "idle"
         if self.boss.current_pattern is not None:
             boss_pose = PATTERNS[self.boss.current_pattern]["pose"]
