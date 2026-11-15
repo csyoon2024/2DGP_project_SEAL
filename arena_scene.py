@@ -181,6 +181,10 @@ def boss_anchor(position_x, forward_progress):
     return x, y, depth
 
 
+# 평시 보스 매몰선의 화면 y (≈330). 보스 크기의 기준점
+BOSS_HOME_BURIAL_Y = project(0, BOSS_DEPTH, PEDESTAL_TOP_ELEVATION)[1]
+
+
 def set_draw_color(name, alpha=255, saturation=1.0, blue_tint=0.0):
     global active_color
     color = COLORS[name]
@@ -759,13 +763,19 @@ def draw_boss_placeholder(
     """
     awakening_scale = BossController.AWAKENING_SIZE_SCALE if awakened else 1.0
     lunge_scale = 1.0 + (1.05 / 0.78 - 1.0) * forward_progress
-    # 각성은 40px 앞으로 솟아오른다 (BOSS1_SPEC §2). 돌진은 burial_y 자체가 내려온다
-    burial_y -= 40 if awakened else 0
-    desired_scale = BOSS_DISPLAY_SCALE * max(awakening_scale, lunge_scale)
     # 몸통 밑변(발치 + 34)이 매몰선에 오도록 발치를 매몰선 아래에 둔다.
     # 보이는 높이는 몸통 밑변 ~ 뿔 끝 = 214 - 34 = 180 단위
     body_offset = 34
     visible_height = 214 - body_offset
+    # 각성 시 매몰선을 40px 내리던 것을 없앴다: 위가 천장(615)에 막혀 아래로만 커지면서
+    # 보스가 단상에서 43px 미끄러져 내려왔다. 이제 매몰선은 고정이고 보스는 위로만 커진다.
+    # 기본 배율은 각성(1.4배)이 천장에 딱 맞도록 정한다 → 평시 ≈ 200px, 각성 ≈ 280px (PRD §2)
+    home_base_scale = (BOSS_CEILING_Y - BOSS_HOME_BURIAL_Y) / (
+        visible_height * BossController.AWAKENING_SIZE_SCALE
+    )
+    desired_scale = min(BOSS_DISPLAY_SCALE, home_base_scale) * max(
+        awakening_scale, lunge_scale
+    )
     max_visible_scale = (BOSS_CEILING_Y - burial_y) / visible_height
     scale = min(desired_scale, max_visible_scale)
     foot_y = burial_y - body_offset * scale
