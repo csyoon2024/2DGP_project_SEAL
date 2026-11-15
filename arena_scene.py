@@ -15,6 +15,8 @@ from boss import BossAttack, BossController, PATTERNS, PHASE_PATTERNS
 
 WIDTH = 1280
 HEIGHT = 720
+DRAW_OFFSET_X = 0
+DRAW_OFFSET_Y = 0
 
 COLORS = {
     "background": (12, 14, 20),
@@ -28,6 +30,7 @@ COLORS = {
     "front_edge": (255, 107, 53),
     "accent": (224, 28, 44),
     "accent_light": (255, 107, 53),
+    "flash": (255, 244, 224),
     "actor_dark": (10, 12, 16),
     "actor": (10, 12, 16),
     "actor_light": (74, 158, 255),
@@ -79,8 +82,8 @@ def set_draw_color(name, alpha=255):
 
 def draw_filled_circle(x, y, radius):
     pico_draw_circle(
-        int(round(x)),
-        int(round(y)),
+        int(round(x + DRAW_OFFSET_X)),
+        int(round(y + DRAW_OFFSET_Y)),
         max(1, int(round(radius))),
         *active_color,
         filled=True,
@@ -103,10 +106,10 @@ def draw_filled_ellipse(center_x, center_y, radius_x, radius_y):
 
 def draw_filled_rectangle(left, bottom, right, top):
     pico_draw_rectangle(
-        int(round(left)),
-        int(round(bottom)),
-        int(round(right)),
-        int(round(top)),
+        int(round(left + DRAW_OFFSET_X)),
+        int(round(bottom + DRAW_OFFSET_Y)),
+        int(round(right + DRAW_OFFSET_X)),
+        int(round(top + DRAW_OFFSET_Y)),
         *active_color,
         filled=True,
     )
@@ -114,20 +117,20 @@ def draw_filled_rectangle(left, bottom, right, top):
 
 def draw_line(x1, y1, x2, y2):
     pico_draw_line(
-        int(round(x1)),
-        int(round(y1)),
-        int(round(x2)),
-        int(round(y2)),
+        int(round(x1 + DRAW_OFFSET_X)),
+        int(round(y1 + DRAW_OFFSET_Y)),
+        int(round(x2 + DRAW_OFFSET_X)),
+        int(round(y2 + DRAW_OFFSET_Y)),
         *active_color,
     )
 
 
 def draw_rectangle(left, bottom, right, top):
     pico_draw_rectangle(
-        int(round(left)),
-        int(round(bottom)),
-        int(round(right)),
-        int(round(top)),
+        int(round(left + DRAW_OFFSET_X)),
+        int(round(bottom + DRAW_OFFSET_Y)),
+        int(round(right + DRAW_OFFSET_X)),
+        int(round(top + DRAW_OFFSET_Y)),
         *active_color,
     )
 
@@ -254,7 +257,7 @@ def draw_boss_placeholder(
         482,
     )
 
-    body_color = "actor_light" if hit else ("wall_light" if defeated else "actor_dark")
+    body_color = "flash" if hit else ("wall_light" if defeated else "actor_dark")
     set_draw_color("actor_dark")
     draw_filled_rectangle(
         center_x - body_half_width - 8 * scale,
@@ -404,6 +407,12 @@ class ArenaScene:
         self.attack_hit_registered = False
         self.successful_hits = 0
         self.boss_hit_timer = 0.0
+        self.screen_shake_timer = 0.0
+        self.screen_shake_duration = 0.0
+        self.screen_shake_strength = 0.0
+        self.screen_shake_frame = 0
+        self.impact_flash_timer = 0.0
+        self.impact_flash_position = (640, 360)
         self.player_health = PLAYER_MAX_HEALTH
         self.seal_gauge = SealGauge()
         self.boss = BossController()
@@ -534,7 +543,24 @@ class ArenaScene:
             else SealGauge.BOSS_HIT_LOSS
         )
         self.seal_gauge.player_hit(hit_loss)
+        lane = LANES[self.player_lane]
+        player_screen_x = lane["left"] + self.player_logical_x * (
+            lane["right"] - lane["left"]
+        ) / PLAYER_LOGICAL_WIDTH
+        self.trigger_impact_flash(player_screen_x, lane["center_y"])
+        self.trigger_screen_shake(8, 0.15)
         return True
+
+    def trigger_screen_shake(self, strength, duration):
+        if strength >= self.screen_shake_strength or self.screen_shake_timer <= 0:
+            self.screen_shake_strength = strength
+            self.screen_shake_duration = duration
+            self.screen_shake_timer = duration
+            self.screen_shake_frame = 0
+
+    def trigger_impact_flash(self, x, y):
+        self.impact_flash_position = (x, y)
+        self.impact_flash_timer = 0.08
 
     def consume_debug_phase_jump(self):
         phase = self.debug_phase_jump_request
@@ -612,6 +638,9 @@ class ArenaScene:
             self.invulnerability_timer - fixed_delta,
         )
         self.boss_hit_timer = max(0.0, self.boss_hit_timer - fixed_delta)
+        self.screen_shake_timer = max(0.0, self.screen_shake_timer - fixed_delta)
+        self.impact_flash_timer = max(0.0, self.impact_flash_timer - fixed_delta)
+        self.screen_shake_frame += 1
         self.seal_gauge.update(fixed_delta)
         self.boss.set_awakened(self.seal_gauge.boss_awakened)
 
@@ -628,7 +657,7 @@ class ArenaScene:
             ):
                 if self.resolve_attack_hit():
                     self.successful_hits += 1
-                    self.boss_hit_timer = 0.12
+                    self.boss_hit_timer = 0.06
                     self.seal_gauge.player_attack_hit(self.attack_type)
                 self.attack_hit_registered = True
             if self.attack_elapsed >= attack_duration - 1e-9:
@@ -679,6 +708,19 @@ class ArenaScene:
             forced_pattern,
         )
         for boss_attack in boss_attacks:
+            shake_strength, shake_duration = PATTERNS[boss_attack.pattern]["shake"]
+            if boss_attack.pattern == "slam_double":
+                shake_strength = 6 if boss_attack.hit_index == 0 else 8
+            impact_lane = LANES[boss_attack.target_lane or self.player_lane]
+            impact_x = boss_attack.target_x
+            if impact_x is None:
+                impact_screen_x = WIDTH / 2
+            else:
+                impact_screen_x = impact_lane["left"] + impact_x * (
+                    impact_lane["right"] - impact_lane["left"]
+                ) / PLAYER_LOGICAL_WIDTH
+            self.trigger_screen_shake(shake_strength, shake_duration)
+            self.trigger_impact_flash(impact_screen_x, impact_lane["center_y"])
             self.resolve_boss_attack(boss_attack)
 
         if self.player_health <= 0 or self.seal_gauge.boss_won:
@@ -742,6 +784,20 @@ class ArenaScene:
         return False
 
     def draw(self):
+        global DRAW_OFFSET_X, DRAW_OFFSET_Y
+        if self.screen_shake_timer > 0 and self.screen_shake_duration > 0:
+            shake_scale = self.screen_shake_timer / self.screen_shake_duration
+            shake_sign = -1 if self.screen_shake_frame % 2 else 1
+            DRAW_OFFSET_X = round(
+                self.screen_shake_strength * shake_scale * shake_sign
+            )
+            DRAW_OFFSET_Y = round(
+                self.screen_shake_strength * 0.35 * shake_scale * -shake_sign
+            )
+        else:
+            DRAW_OFFSET_X = 0
+            DRAW_OFFSET_Y = 0
+
         draw_room()
         draw_perspective_rails()
         draw_lane(LANES["platform_2"], "rear_lane", "rear_edge", 10)
@@ -772,6 +828,8 @@ class ArenaScene:
         self.draw_seal_gauge()
         self.draw_boss_telegraph()
         self.draw_homing_projectile()
+        self.draw_active_boss_effects()
+        self.draw_impact_flash()
 
         lane = LANES[self.player_lane]
         player_y = lane["center_y"]
@@ -865,6 +923,9 @@ class ArenaScene:
 
         if self.debug_panel_visible:
             self.draw_debug_panel()
+
+        DRAW_OFFSET_X = 0
+        DRAW_OFFSET_Y = 0
 
     def draw_debug_panel(self):
         set_draw_color("actor_dark")
@@ -1043,6 +1104,61 @@ class ArenaScene:
         )
         set_draw_color("accent_light")
         draw_filled_circle(projectile_x, projectile_y, 8 + 12 * progress)
+
+    def draw_active_boss_effects(self):
+        if self.boss.state != "active" or self.boss.current_pattern is None:
+            return
+
+        pattern_name = self.boss.current_pattern
+        pattern = PATTERNS[pattern_name]
+        progress = min(self.boss.attack_elapsed / pattern["duration"], 1.0)
+        if pattern["marker"] == "column" and self.boss.target_x is not None:
+            set_draw_color("flash", 190)
+            for lane_name in ("platform_1", "platform_2"):
+                lane = LANES[lane_name]
+                scale = (lane["right"] - lane["left"]) / PLAYER_LOGICAL_WIDTH
+                center_x = lane["left"] + self.boss.target_x * scale
+                half_width = pattern["hitbox_width"] * scale * 0.5
+                draw_filled_rectangle(
+                    center_x - half_width,
+                    lane["bottom"],
+                    center_x + half_width,
+                    lane["top"],
+                )
+        elif pattern["marker"] == "lane":
+            lane = LANES[self.boss.target_lane]
+            lane_center = (lane["left"] + lane["right"]) * 0.5
+            wave_offset = (lane["right"] - lane["left"]) * 0.5 * progress
+            half_width = max(10, (lane["right"] - lane["left"]) * 0.018)
+            set_draw_color("flash", 220)
+            for wave_center in (lane_center - wave_offset, lane_center + wave_offset):
+                draw_filled_rectangle(
+                    wave_center - half_width,
+                    lane["bottom"],
+                    wave_center + half_width,
+                    lane["top"],
+                )
+        elif pattern["marker"] == "two_spots" and self.boss.next_hit_index == 1:
+            lane = LANES["platform_1"]
+            scale = (lane["right"] - lane["left"]) / PLAYER_LOGICAL_WIDTH
+            target_x = lane["left"] + self.boss.secondary_target_x * scale
+            marker_progress = min(progress / 0.65, 1.0)
+            set_draw_color("accent_light", int(90 + 110 * marker_progress))
+            draw_filled_ellipse(
+                target_x,
+                lane["center_y"] + 4,
+                80 * (1.0 - 0.5 * marker_progress) * scale,
+                18 * (1.0 - 0.5 * marker_progress) * lane["scale"],
+            )
+
+    def draw_impact_flash(self):
+        if self.impact_flash_timer <= 0:
+            return
+        x, y = self.impact_flash_position
+        alpha = int(220 * min(self.impact_flash_timer / 0.08, 1.0))
+        radius = 30 + 30 * (1.0 - self.impact_flash_timer / 0.08)
+        set_draw_color("flash", alpha)
+        draw_filled_circle(x, y, radius)
 
     def draw_player_health(self):
         for health_index in range(PLAYER_MAX_HEALTH):

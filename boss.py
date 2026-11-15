@@ -93,6 +93,7 @@ class BossAttack:
     target_lane: str | None
     target_x: float | None
     hitbox_width: float | None
+    hit_index: int = 0
 
 
 class BossController:
@@ -277,6 +278,7 @@ class BossController:
                     target_lane=target_lane,
                     target_x=target_x,
                     hitbox_width=pattern["hitbox_width"],
+                    hit_index=self.next_hit_index,
                 )
             )
             self.next_hit_index += 1
