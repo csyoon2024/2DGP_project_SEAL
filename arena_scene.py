@@ -333,6 +333,51 @@ def draw_room():
     draw_line(VANISHING_X - wall_half, wall_y, VANISHING_X + wall_half, wall_y)
 
 
+def draw_back_fog():
+    """보스 뒤 안개 — 뒷벽 밑동과 그 앞 바닥에 깔린 뿌연 층 (최대 알파 약 0.3)."""
+    fog = (70, 82, 110)
+    dense = fog + (80,)
+    clear = fog + (0,)
+    wall_y = VANISHING_Y - CAMERA_HEIGHT * BACK_WALL_DEPTH
+    wall_half = ROOM_HALF_WIDTH * BACK_WALL_DEPTH
+
+    # 뒷벽 — 바닥에서 위로 옅어진다
+    draw_polygon(
+        (
+            (VANISHING_X - wall_half, wall_y),
+            (VANISHING_X + wall_half, wall_y),
+            (VANISHING_X + wall_half, wall_y + 220),
+            (VANISHING_X - wall_half, wall_y + 220),
+        ),
+        (dense, dense, clear, clear),
+    )
+    # 뒷벽 앞 바닥 — 카메라 쪽으로 옅어진다
+    fog_near_depth = 0.56
+    draw_polygon(
+        (
+            project(-ROOM_HALF_WIDTH, fog_near_depth),
+            project(ROOM_HALF_WIDTH, fog_near_depth),
+            project(ROOM_HALF_WIDTH, BACK_WALL_DEPTH),
+            project(-ROOM_HALF_WIDTH, BACK_WALL_DEPTH),
+        ),
+        (clear, clear, dense, dense),
+    )
+    # 보스 머리 뒤 은은한 후광 — 실루엣이 배경에서 떨어져 보이게
+    halo_center = (VANISHING_X, VANISHING_Y - 90)
+    segments = 24
+    ring = [
+        (
+            halo_center[0] + 320 * math.cos(2 * math.pi * index / segments),
+            halo_center[1] + 230 * math.sin(2 * math.pi * index / segments),
+        )
+        for index in range(segments + 1)
+    ]
+    draw_polygon(
+        [halo_center] + ring,
+        [fog + (50,)] + [clear] * (segments + 1),
+    )
+
+
 def draw_pillars():
     """좌우 기둥. 먼 것부터 그린다. 앞면 + 안쪽 옆면 + 바닥 그림자."""
     for depth in PILLAR_DEPTHS:
@@ -602,7 +647,8 @@ def draw_boss_placeholder(
     head_y = foot_y + 166 * scale
 
     def set_boss_color(color_name):
-        set_draw_color(color_name, round(255 * 0.6), 0.4, 0.45)
+        # 대기 원근: 채도 0.4 → 0.32 (20% 낮춤), 블루 틴트 0.45 → 0.55
+        set_draw_color(color_name, round(255 * 0.6), 0.32, 0.55)
 
     set_boss_color("shadow")
     draw_filled_ellipse(
@@ -1149,6 +1195,7 @@ class ArenaScene:
 
         draw_room()
         draw_pillars()
+        draw_back_fog()
         draw_pedestal()
         boss_pose = "idle"
         if self.boss.current_pattern is not None:
