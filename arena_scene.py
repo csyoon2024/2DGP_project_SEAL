@@ -57,6 +57,8 @@ HEAVY_ATTACK_DURATION = 0.70
 PLAYER_MAX_HEALTH = 3
 DEBUG_GAUGE_STEP = 0.05
 BOSS_DISPLAY_SCALE = 1.5
+# 보스 실루엣(뿔·치켜든 손 포함)의 상한. 게이지 바 아랫변 650보다 충분히 아래 (조건: < 620)
+BOSS_CEILING_Y = 615
 
 # ---------------------------------------------------------------------------
 # 원근 카메라 — 화면의 모든 평면은 이 한 점으로 수렴한다.
@@ -69,8 +71,12 @@ BOSS_DISPLAY_SCALE = 1.5
 # 게임플레이는 여전히 논리 x 0~900만 쓴다. 이 블록은 그리기 전용이다.
 # ---------------------------------------------------------------------------
 VANISHING_X = WIDTH / 2
-VANISHING_Y = 660
-CAMERA_HEIGHT = 580
+# 660 → 583: 게이지 바(y 650~690)와 겹치지 않게 장면 전체를 아래로 내린다.
+#   뒷줄 앞 모서리 = 583 - (520 - 22) * 1.10 ≈ 35 (조건: y ≥ 20)
+VANISHING_Y = 583
+# 580 → 520: 소실점을 내리면서 카메라도 낮춰 레인 간격을 유지한다.
+#   앞줄 먼 모서리 = 583 - (520 - 36) * 0.645 ≈ 271, 두 플랫폼 세로 합계 ≈ 190px (< 720의 45%)
+CAMERA_HEIGHT = 520
 LANE_HALF_WIDTH = 590
 ROOM_HALF_WIDTH = 760
 ROOM_NEAR_DEPTH = 1.6
@@ -636,7 +642,7 @@ def draw_boss_placeholder(
     foot_y = base_foot_y - (40 if awakened else 0)
     desired_scale = BOSS_DISPLAY_SCALE * max(awakening_scale, lunge_scale)
     visible_height = 214
-    max_visible_scale = (HEIGHT - foot_y - 1) / visible_height
+    max_visible_scale = (BOSS_CEILING_Y - foot_y) / visible_height
     scale = min(desired_scale, max_visible_scale)
     body_half_width = 42 * scale
     body_bottom = foot_y + 34 * scale
@@ -675,8 +681,8 @@ def draw_boss_placeholder(
     draw_filled_circle(center_x, head_y, 27 * scale)
 
     set_boss_color("actor_dark")
-    horn_start_y = min(head_y + 18 * scale, HEIGHT - 1)
-    horn_end_y = min(head_y + 48 * scale, HEIGHT - 1)
+    horn_start_y = min(head_y + 18 * scale, BOSS_CEILING_Y)
+    horn_end_y = min(head_y + 48 * scale, BOSS_CEILING_Y)
     draw_line(center_x - 30 * scale, horn_start_y, center_x - 48 * scale, horn_end_y)
     draw_line(center_x + 30 * scale, horn_start_y, center_x + 48 * scale, horn_end_y)
     draw_line(center_x - 20 * scale, body_bottom, center_x - 28 * scale, foot_y)
@@ -693,11 +699,11 @@ def draw_boss_placeholder(
         draw_filled_circle(hand_screen_x, hand_y, 9 * scale)
 
     if pose == "slam":
-        hand_limit = HEIGHT - 9 * scale
+        hand_limit = BOSS_CEILING_Y - 9 * scale
         draw_arm(-1, 58, min(foot_y + 177 * scale, hand_limit - 9 * scale), 64, min(foot_y + 220 * scale, hand_limit))
         draw_arm(1, 58, foot_y + 105 * scale, 75, foot_y + 78 * scale)
     elif pose == "slam_double":
-        hand_limit = HEIGHT - 9 * scale
+        hand_limit = BOSS_CEILING_Y - 9 * scale
         raised_elbow_y = min(foot_y + 177 * scale, hand_limit - 9 * scale)
         raised_hand_y = min(foot_y + 220 * scale, hand_limit)
         draw_arm(-1, 58, raised_elbow_y, 64, raised_hand_y)
