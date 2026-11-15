@@ -262,6 +262,12 @@ def draw_polyline(points, closed=True):
         draw_line(x1, y1, x2, y2)
 
 
+def draw_void():
+    """배경 보이드 — 단색. 플랫폼과 단상이 그 위에 떠 있다 (BOSS1_SPEC §1.1 #0C0E14)."""
+    set_draw_color("background")
+    draw_filled_rectangle(0, 0, WIDTH, HEIGHT)
+
+
 def draw_room():
     wall_y = VANISHING_Y - CAMERA_HEIGHT * BACK_WALL_DEPTH
     wall_half = ROOM_HALF_WIDTH * BACK_WALL_DEPTH
@@ -556,21 +562,6 @@ def draw_lane(lane_name,fill_color, edge_color, tick_count, opacity=0.85, satura
     world_right = logical_to_world_x(PLAYER_LOGICAL_WIDTH)
     base_left = project(world_left, lane["near"])
     base_right = project(world_right, lane["near"])
-
-    # 바닥에 떨어지는 그림자 — 앞면 밑동에서 카메라 쪽으로 번진다
-    shadow_depth = lane["near"] * 1.08
-    shadow_spread = 24
-    shadow_dark = (6, 7, 11, 150)
-    shadow_clear = (6, 7, 11, 0)
-    draw_polygon(
-        (
-            project(world_left - shadow_spread, shadow_depth),
-            project(world_right + shadow_spread, shadow_depth),
-            base_right,
-            base_left,
-        ),
-        (shadow_clear, shadow_clear, shadow_dark, shadow_dark),
-    )
 
     # 앞면(두께) — 윗면보다 어두운 같은 색, 아래로 갈수록 더 어둡다
     set_draw_color(fill_color, 255, saturation)
@@ -1193,9 +1184,7 @@ class ArenaScene:
             DRAW_OFFSET_X = 0
             DRAW_OFFSET_Y = 0
 
-        draw_room()
-        draw_pillars()
-        draw_back_fog()
+        draw_void()
         draw_pedestal()
         boss_pose = "idle"
         if self.boss.current_pattern is not None:
