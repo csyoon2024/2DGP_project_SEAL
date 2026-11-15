@@ -97,7 +97,7 @@ class BossAttack:
 class BossController:
     PATTERN_GAP = 0.60
     AWAKENING_DEMO_DURATION = 2.0
-    AWAKENING_SIZE_SCALE = 1.6
+    AWAKENING_SIZE_SCALE = 1.4
     AWAKENING_HITBOX_SCALE = 1.4
 
     def __init__(self):
@@ -117,6 +117,8 @@ class BossController:
         self.next_hit_index = 0
         self.telegraph_elapsed = 0.0
         self.secondary_target_x = None
+        self.forward_progress = 0.0
+        self.forward_progress = 0.0
 
     def begin_awakening_demo(self):
         self.awakened = True
@@ -141,6 +143,11 @@ class BossController:
 
         if self.state == "rest":
             self.timer -= fixed_delta
+            if self.previous_pattern == "charge":
+                self.forward_progress = max(
+                    0.0,
+                    self.forward_progress - fixed_delta / self.PATTERN_GAP,
+                )
             if self.timer <= 1e-9:
                 self._begin_pattern(phase, player_lane, player_x, rng, forced_pattern)
             return attacks
@@ -162,10 +169,15 @@ class BossController:
             if self.current_pattern == "homing":
                 self.target_lane = player_lane
                 self.target_x = player_x
+            elif self.current_pattern == "charge":
+                duration = PATTERNS["charge"]["duration"]
+                self.forward_progress = min(self.attack_elapsed / duration, 1.0)
             attacks.extend(self._collect_attacks(self.attack_elapsed))
             if self.timer <= 1e-9:
                 self.state = "recovery"
                 self.timer = PATTERNS[self.current_pattern]["recovery"]
+                if self.current_pattern == "charge":
+                    self.forward_progress = 1.0
             return attacks
 
         self.timer -= fixed_delta
