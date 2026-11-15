@@ -77,7 +77,9 @@ VANISHING_Y = 583
 # 580 → 520: 소실점을 내리면서 카메라도 낮춰 레인 간격을 유지한다.
 #   앞줄 먼 모서리 = 583 - (520 - 36) * 0.645 ≈ 271, 두 플랫폼 세로 합계 ≈ 190px (< 720의 45%)
 CAMERA_HEIGHT = 520
-LANE_HALF_WIDTH = 590
+# 590 → 480: 플랫폼 폭을 줄인다 (뒷줄 1180 → 960px, 앞줄 838 → 682px).
+#   그리기 배율만 바뀐다. 판정은 논리 x 0~900 그대로이고 앞/뒷줄 비율 0.71도 유지된다
+LANE_HALF_WIDTH = 480
 ROOM_HALF_WIDTH = 760
 ROOM_NEAR_DEPTH = 1.6
 BACK_WALL_DEPTH = 0.40
@@ -112,7 +114,9 @@ LANES = {
         "near": 1.10,
         "far": 0.90,
         "scale": 1.0,
-        "elevation": 22,
+        # 22 → 44: 뒷줄을 띄워 앞줄과의 화면상 간격을 줄인다 (빈틈 64 → 45px).
+        #   앞 모서리 = 583 - (520 - 44) * 1.10 ≈ 59 (조건 y ≥ 20 유지)
+        "elevation": 44,
         # 보이드 위에 뜬 판의 두께. elevation(띄운 높이)과 분리한다
         "thickness": 10,
     },
@@ -1530,15 +1534,24 @@ class ArenaScene:
             near_alpha = round(110 * fade)
             far_color = (255, 244, 224, far_alpha)
             near_color = (255, 214, 170, near_alpha)
-            draw_polygon(
-                (
-                    project(left, LANES["platform_2"]["near"]),
-                    project(right, LANES["platform_2"]["near"]),
-                    project(right, BOSS_CHARGE_DEPTH),
-                    project(left, BOSS_CHARGE_DEPTH),
-                ),
-                (near_color, near_color, far_color, far_color),
-            )
+            # 바닥이 없으므로 띠는 플랫폼 높이를 따라 이어진다:
+            # 보스 발치 → 앞줄 먼 모서리, 앞줄 앞 모서리 → 뒷줄 먼 모서리
+            rear = LANES["platform_2"]
+            front = LANES["platform_1"]
+            gap_color = (255, 228, 196, round(160 * fade))
+            for near_depth, near_elevation, far_depth, far_elevation, near_rgba, far_rgba in (
+                (front["far"], front["elevation"], BOSS_CHARGE_DEPTH, PEDESTAL_TOP_ELEVATION, far_color, far_color),
+                (rear["far"], rear["elevation"], front["near"], front["elevation"], gap_color, gap_color),
+            ):
+                draw_polygon(
+                    (
+                        project(left, near_depth, near_elevation),
+                        project(right, near_depth, near_elevation),
+                        project(right, far_depth, far_elevation),
+                        project(left, far_depth, far_elevation),
+                    ),
+                    (near_rgba, near_rgba, far_rgba, far_rgba),
+                )
             for lane_name in ("platform_1", "platform_2"):
                 lane = LANES[lane_name]
                 draw_polygon(
