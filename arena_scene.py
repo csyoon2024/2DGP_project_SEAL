@@ -1346,27 +1346,89 @@ class ArenaScene:
         pattern = PATTERNS[pattern_name]
         progress = min(self.boss.attack_elapsed / pattern["duration"], 1.0)
         if pattern["marker"] == "column" and self.boss.target_x is not None:
+            # 돌진 진행선 — 보스 발치에서 카메라 쪽까지 바닥을 따라 이어지는 빛의 띠
+            fade = 1.0 - 0.6 * progress
             half_width = pattern["hitbox_width"] * 0.5
-            set_draw_color("flash", 190)
+            left = logical_to_world_x(self.boss.target_x - half_width)
+            right = logical_to_world_x(self.boss.target_x + half_width)
+            far_alpha = round(230 * fade)
+            near_alpha = round(110 * fade)
+            far_color = (255, 244, 224, far_alpha)
+            near_color = (255, 214, 170, near_alpha)
+            draw_polygon(
+                (
+                    project(left, LANES["platform_2"]["near"]),
+                    project(right, LANES["platform_2"]["near"]),
+                    project(right, BOSS_CHARGE_DEPTH),
+                    project(left, BOSS_CHARGE_DEPTH),
+                ),
+                (near_color, near_color, far_color, far_color),
+            )
             for lane_name in ("platform_1", "platform_2"):
+                lane = LANES[lane_name]
                 draw_polygon(
                     lane_quad(
                         lane_name,
                         self.boss.target_x - half_width,
                         self.boss.target_x + half_width,
-                    )
+                    ),
+                    (near_color, near_color, far_color, far_color),
                 )
-        elif pattern["marker"] == "lane":
-            wave_offset = PLAYER_LOGICAL_WIDTH * 0.5 * progress
-            half_width = 12
-            set_draw_color("flash", 220)
-            for wave_center in (BOSS_LOGICAL_X - wave_offset, BOSS_LOGICAL_X + wave_offset):
-                draw_polygon(
-                    lane_quad(
-                        self.boss.target_lane,
-                        wave_center - half_width,
-                        wave_center + half_width,
+                set_draw_color("flash", far_alpha)
+                for edge in (left, right):
+                    draw_line(
+                        *project(edge, lane["near"], lane["elevation"]),
+                        *project(edge, lane["far"], lane["elevation"]),
                     )
+        elif pattern["marker"] == "lane":
+            # 충격파 벽 — 레인 위에 서서 양옆으로 퍼지는 흰–주황 벽
+            lane = LANES[self.boss.target_lane]
+            elevation = lane["elevation"]
+            wall_height = 70
+            wave_offset = PLAYER_LOGICAL_WIDTH * 0.5 * progress
+            half_width = 10
+            base_color = (255, 244, 224, 235)
+            top_color = (255, 107, 53, 0)
+            side_base = (255, 190, 140, 200)
+            for direction in (-1, 1):
+                center = BOSS_LOGICAL_X + direction * wave_offset
+                inner = logical_to_world_x(center - direction * half_width)
+                outer = logical_to_world_x(center + direction * half_width)
+                # 레인 깊이를 따라 선 얇은 벽의 바깥쪽 면
+                draw_polygon(
+                    (
+                        project(outer, lane["near"], elevation),
+                        project(outer, lane["far"], elevation),
+                        project(outer, lane["far"], elevation + wall_height),
+                        project(outer, lane["near"], elevation + wall_height),
+                    ),
+                    (side_base, side_base, top_color, top_color),
+                )
+                # 카메라를 향한 앞면
+                draw_polygon(
+                    (
+                        project(inner, lane["near"], elevation),
+                        project(outer, lane["near"], elevation),
+                        project(outer, lane["near"], elevation + wall_height),
+                        project(inner, lane["near"], elevation + wall_height),
+                    ),
+                    (base_color, base_color, top_color, top_color),
+                )
+                # 벽이 지나간 자리의 바닥 잔광
+                trail = logical_to_world_x(center - direction * 60)
+                draw_polygon(
+                    (
+                        project(trail, lane["near"], elevation),
+                        project(outer, lane["near"], elevation),
+                        project(outer, lane["far"], elevation),
+                        project(trail, lane["far"], elevation),
+                    ),
+                    (
+                        (255, 107, 53, 0),
+                        (255, 200, 150, 120),
+                        (255, 200, 150, 120),
+                        (255, 107, 53, 0),
+                    ),
                 )
         elif pattern["marker"] == "two_spots" and self.boss.next_hit_index == 1:
             lane = LANES["platform_1"]
@@ -1385,10 +1447,25 @@ class ArenaScene:
         if self.impact_flash_timer <= 0:
             return
         x, y = self.impact_flash_position
-        alpha = int(220 * min(self.impact_flash_timer / 0.08, 1.0))
-        radius = 30 + 30 * (1.0 - self.impact_flash_timer / 0.08)
-        set_draw_color("flash", alpha)
-        draw_filled_circle(x, y, radius)
+        remaining = min(self.impact_flash_timer / 0.08, 1.0)
+        spread = 1.0 - remaining
+        # 바닥에 납작하게 퍼지는 착탄 고리 + 위로 솟는 짧은 섬광
+        set_draw_color("flash", int(200 * remaining))
+        draw_filled_ellipse(x, y, 40 + 50 * spread, 10 + 12 * spread)
+        draw_polygon(
+            (
+                (x - 14, y),
+                (x + 14, y),
+                (x + 4, y + 60 + 40 * spread),
+                (x - 4, y + 60 + 40 * spread),
+            ),
+            (
+                (255, 244, 224, int(220 * remaining)),
+                (255, 244, 224, int(220 * remaining)),
+                (255, 244, 224, 0),
+                (255, 244, 224, 0),
+            ),
+        )
 
     def draw_player_health(self):
         for health_index in range(PLAYER_MAX_HEALTH):
