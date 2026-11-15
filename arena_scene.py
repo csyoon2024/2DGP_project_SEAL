@@ -311,6 +311,67 @@ def draw_void():
     draw_filled_rectangle(0, 0, WIDTH, HEIGHT)
 
 
+def draw_radial_glow(center_x, center_y, radius_x, radius_y, rgb, alpha, segments=28):
+    """가운데가 진하고 가장자리로 갈수록 투명해지는 타원 발광."""
+    ring = [
+        (
+            center_x + radius_x * math.cos(2 * math.pi * index / segments),
+            center_y + radius_y * math.sin(2 * math.pi * index / segments),
+        )
+        for index in range(segments + 1)
+    ]
+    draw_polygon(
+        [(center_x, center_y)] + ring,
+        [tuple(rgb) + (alpha,)] + [tuple(rgb) + (0,)] * (segments + 1),
+    )
+
+
+def draw_soft_panel(left, bottom, right, top, feather, rgb, alpha):
+    """가장자리 feather px에 걸쳐 투명해지는 사각 발광 패널."""
+    solid = tuple(rgb) + (alpha,)
+    clear = tuple(rgb) + (0,)
+    inner = ((left, bottom), (right, bottom), (right, top), (left, top))
+    outer = (
+        (left - feather, bottom - feather),
+        (right + feather, bottom - feather),
+        (right + feather, top + feather),
+        (left - feather, top + feather),
+    )
+    draw_polygon(inner, (solid,) * 4)
+    # 네 변을 사다리꼴로 감싼다. 모서리는 대각선으로 맞물린다
+    for index in range(4):
+        following = (index + 1) % 4
+        draw_polygon(
+            (inner[index], inner[following], outer[following], outer[index]),
+            (solid, solid, clear, clear),
+        )
+
+
+# 보스 역광 — 실루엣을 배경에서 떼어 내는 뒷벽 발광.
+# 평시: 어두운 청회색, 약하게. 보스(#0A0C10)와 벽(≈#181C28) 사이 명도 차를 벌릴 만큼만
+BOSS_BACKLIGHT_CALM = ((70, 86, 120), 55)
+# 각성: 보스 강조색 #E01C2C 쪽 붉은빛. 알파 55 → 140 (약 2.5배) — 게이지를 안 봐도 상태가 읽힌다
+BOSS_BACKLIGHT_AWAKENED = ((224, 40, 34), 140)
+
+
+def draw_boss_backlight(awakened):
+    """보스보다 먼저 그리는 뒷벽 역광 패널 + 머리 뒤 발광."""
+    rgb, alpha = BOSS_BACKLIGHT_AWAKENED if awakened else BOSS_BACKLIGHT_CALM
+    wall_y = VANISHING_Y - CAMERA_HEIGHT * BACK_WALL_DEPTH
+    # 뒷벽 위 넓은 패널 — 보스 몸통 폭보다 넓게, 가장자리 90px에 걸쳐 사라진다
+    draw_soft_panel(
+        VANISHING_X - 150,
+        wall_y + 10,
+        VANISHING_X + 150,
+        HEIGHT - 120,
+        90,
+        rgb,
+        alpha // 2,
+    )
+    # 머리·어깨 뒤에 더 진한 타원 — 윤곽선이 가장 중요한 부분을 밝힌다
+    draw_radial_glow(VANISHING_X, wall_y + 180, 260, 200, rgb, alpha)
+
+
 def draw_room(with_floor=True):
     """뒷벽·좌우 벽, 그리고 with_floor면 바닥과 격자까지.
 
@@ -1239,6 +1300,7 @@ class ArenaScene:
         draw_room(with_floor=False)
         draw_pillars(with_floor=False)
         draw_back_fog()
+        draw_boss_backlight(self.boss.awakened)
         draw_pedestal()
         boss_pose = "idle"
         if self.boss.current_pattern is not None:
