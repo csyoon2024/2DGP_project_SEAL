@@ -100,12 +100,16 @@ LANES = {
         "far": 0.90,
         "scale": 1.0,
         "elevation": 22,
+        # 보이드 위에 뜬 판의 두께. elevation(띄운 높이)과 분리한다
+        "thickness": 10,
     },
     "platform_1": {
         "near": 0.78,
         "far": 0.645,
         "scale": 0.71,
         "elevation": 36,
+        # 멀리 있어 화면에서 더 얇아 보이도록 뒷줄보다 조금 얇게
+        "thickness": 8,
     },
 }
 
@@ -560,8 +564,10 @@ def draw_lane(lane_name,fill_color, edge_color, tick_count, opacity=0.85, satura
     near_left, near_right, far_right, far_left = lane_quad(lane_name)
     world_left = logical_to_world_x(0)
     world_right = logical_to_world_x(PLAYER_LOGICAL_WIDTH)
-    base_left = project(world_left, lane["near"])
-    base_right = project(world_right, lane["near"])
+    # 옆면 아래 모서리 — 바닥(높이 0)이 아니라 윗면에서 두께만큼 아래
+    base_elevation = lane["elevation"] - lane["thickness"]
+    base_left = project(world_left, lane["near"], base_elevation)
+    base_right = project(world_right, lane["near"], base_elevation)
 
     # 앞면(두께) — 윗면보다 어두운 같은 색, 아래로 갈수록 더 어둡다
     set_draw_color(fill_color, 255, saturation)
