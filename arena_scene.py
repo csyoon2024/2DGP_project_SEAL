@@ -846,9 +846,22 @@ def draw_boss_placeholder(
     set_boss_color("accent")
     draw_line(center_x - 22 * scale, body_top - 36 * scale, center_x + 22 * scale, body_top - 36 * scale)
     draw_line(center_x - 24 * scale, body_top - 46 * scale, center_x + 24 * scale, body_top - 46 * scale)
-    set_boss_color("accent_light" if awakened else "accent")
-    draw_filled_circle(center_x - 10 * scale, head_y, 4 * scale)
-    draw_filled_circle(center_x + 10 * scale, head_y, 4 * scale)
+    # 눈 — 빨강 발광. 실루엣 안에서 유일하게 빛나는 점이라 시선이 머리로 간다.
+    # 평시 #E01C2C (BOSS1_SPEC 보스 강조색), 각성 #FF3A2A (각성 강조색)로 더 밝고 크게
+    if awakened:
+        eye_rgb, eye_radius, glow_radius, glow_alpha = (255, 58, 42), 5.5, 20, 170
+    else:
+        eye_rgb, eye_radius, glow_radius, glow_alpha = (224, 28, 44), 4.0, 12, 110
+    for eye_side in (-1, 1):
+        eye_x = center_x + eye_side * 10 * scale
+        # 주변 약한 발광 — 가장자리로 갈수록 투명
+        draw_radial_glow(eye_x, head_y, glow_radius * scale, glow_radius * 0.75 * scale, eye_rgb, glow_alpha, 20)
+        set_draw_rgb(*eye_rgb)
+        draw_filled_circle(eye_x, head_y, eye_radius * scale)
+        # 각성 시 중심을 거의 흰색으로 — 더 뜨겁게 보인다
+        if awakened:
+            set_draw_rgb(255, 214, 190)
+            draw_filled_circle(eye_x, head_y, 2.0 * scale)
     clear_clip()
 
     # 매몰선의 흙더미 — 잘린 단면 대신 몸이 땅에 박혀 있는 것처럼 보이게
