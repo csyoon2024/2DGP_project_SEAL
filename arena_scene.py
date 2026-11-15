@@ -634,9 +634,11 @@ def draw_pedestal():
         back_bottom_right = project(half_width, back, previous_elevation)
         back_bottom_left = project(-half_width, back, previous_elevation)
 
-        # 옆면 — 경사가 위를 향해 카메라에 보인다. 앞면보다 어둡다
-        side_near = shade((40, 46, 64), 0.85)
-        side_far = shade((40, 46, 64), 0.55)
+        # 단상 색은 전부 약 55%로 낮췄다: 단상이 보스보다 밝아 화면 위쪽에서 가장 눈에
+        # 띄었다. 보이드(#0C0E14)보다 살짝 밝은 정도로 눌러 보스 역광 대비가 1순위가 되게 한다
+        # 옆면 — 경사가 위를 향해 카메라에 보인다. 앞면보다 어둡다 (40,46,64 → 22,25,35)
+        side_near = shade((22, 25, 35), 0.85)
+        side_far = shade((22, 25, 35), 0.55)
         draw_polygon(
             (front_bottom_left, front_top_left, back_top_left, back_bottom_left),
             (side_near, side_near, side_far, side_far),
@@ -646,29 +648,30 @@ def draw_pedestal():
             (side_near, side_far, side_far, side_near),
         )
 
-        # 윗면 — 가장 밝다
-        top_near = shade((52, 59, 80), 1.0)
-        top_far = shade((52, 59, 80), 0.7)
+        # 윗면 — 단상에서 가장 밝다 (52,59,80 → 29,33,44)
+        top_near = shade((29, 33, 44), 1.0)
+        top_far = shade((29, 33, 44), 0.7)
         draw_polygon(
             (front_top_left, front_top_right, back_top_right, back_top_left),
             (top_near, top_near, top_far, top_far),
         )
 
-        # 앞면
-        face_top = shade((34, 39, 55), 1.0)
-        face_bottom = shade((34, 39, 55), 0.6)
+        # 앞면 (34,39,55 → 19,22,30)
+        face_top = shade((19, 22, 30), 1.0)
+        face_bottom = shade((19, 22, 30), 0.6)
         draw_polygon(
             (front_bottom_left, front_bottom_right, front_top_right, front_top_left),
             (face_bottom, face_bottom, face_top, face_top),
         )
 
         # 모서리 — 윗면 앞 모서리에 빛, 보스 쪽 붉은 기운
-        set_draw_rgb(96, 108, 140, 150)
+        # 모서리 빛도 낮춘다 (알파 150 → 70, 110 → 50) — 형태만 읽히고 시선은 끌지 않게
+        set_draw_rgb(96, 108, 140, 70)
         draw_line(*front_top_left, *front_top_right)
-        set_draw_rgb(70, 80, 106, 110)
+        set_draw_rgb(70, 80, 106, 50)
         draw_line(*front_bottom_left, *front_top_left)
         draw_line(*front_bottom_right, *front_top_right)
-        set_draw_color("accent", 40 + 25 * tier_index)
+        set_draw_color("accent", 30 + 15 * tier_index)
         draw_line(
             *project(-top_half * 0.6, front, elevation - 6),
             *project(top_half * 0.6, front, elevation - 6),
