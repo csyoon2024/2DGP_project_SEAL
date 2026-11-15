@@ -45,6 +45,7 @@ LANES = {
         "top": 120,
         "center_y": 60,
         "scale": 1.0,
+        "perspective": 0.18,
     },
     "platform_1": {
         "left": WIDTH // 20,
@@ -53,6 +54,7 @@ LANES = {
         "top": 285,
         "center_y": 240,
         "scale": 0.71,
+        "perspective": 0.18,
     },
 }
 
@@ -221,7 +223,7 @@ def draw_lane(lane, fill_color, edge_color, tick_count, opacity=0.85, saturation
     center_y = lane["center_y"]
 
     layer_alpha = round(255 * opacity)
-    perspective = 0.18 if lane["scale"] < 1.0 else 0.0
+    perspective = lane.get("perspective", 0.0)
 
     def horizontal_edges(y):
         depth = max(0.0, min((y - bottom) / (top - bottom), 1.0))
@@ -229,15 +231,19 @@ def draw_lane(lane, fill_color, edge_color, tick_count, opacity=0.85, saturation
         midpoint = (left + right) * 0.5
         return midpoint - half_width, midpoint + half_width
 
-    if lane["scale"] < 1.0:
+    if perspective:
         set_draw_color("shadow", 105, 0.6)
-        draw_filled_ellipse(
-            (left + right) * 0.5,
-            bottom - 4,
-            (right - left) * 0.48,
-            15,
-        )
-        draw_filled_rectangle(left + 18, bottom - 12, right - 18, bottom + 2)
+        thickness = round(14 * lane["scale"])
+        if bottom > 0:
+            draw_filled_ellipse(
+                (left + right) * 0.5,
+                bottom - 4,
+                (right - left) * 0.48,
+                15,
+            )
+            draw_filled_rectangle(left + 18, bottom - thickness, right - 18, bottom + 2)
+        else:
+            draw_filled_rectangle(left + 18, bottom, right - 18, bottom + thickness)
 
     if perspective:
         strip_count = 18
