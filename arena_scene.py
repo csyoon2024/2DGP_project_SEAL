@@ -297,6 +297,27 @@ def draw_rectangle(left, bottom, right, top):
     )
 
 
+def draw_thick_line(x1, y1, x2, y2, start_width, end_width=None):
+    """두께가 있는 선(끝으로 갈수록 가늘어질 수 있음)을 사각 폴리곤으로 그린다."""
+    if end_width is None:
+        end_width = start_width
+    length = math.hypot(x2 - x1, y2 - y1)
+    if length < 1e-6:
+        return
+    normal_x = -(y2 - y1) / length
+    normal_y = (x2 - x1) / length
+    half_start = start_width * 0.5
+    half_end = end_width * 0.5
+    draw_polygon(
+        (
+            (x1 + normal_x * half_start, y1 + normal_y * half_start),
+            (x2 + normal_x * half_end, y2 + normal_y * half_end),
+            (x2 - normal_x * half_end, y2 - normal_y * half_end),
+            (x1 - normal_x * half_start, y1 - normal_y * half_start),
+        )
+    )
+
+
 def draw_polyline(points, closed=True):
     count = len(points)
     for index in range(count if closed else count - 1):
@@ -752,8 +773,9 @@ def draw_boss_placeholder(
     head_y = foot_y + 166 * scale
 
     def set_boss_color(color_name):
-        # 대기 원근: 채도 0.4 → 0.32 (20% 낮춤), 블루 틴트 0.45 → 0.55
-        set_draw_color(color_name, round(255 * 0.6), 0.32, 0.55)
+        # 알파 0.6 → 불투명, 채도·블루 틴트 제거: 반투명 청색 보스는 벽(≈#181C28)과 명도가
+        # 같아 묻혔다. 플레이어와 같은 #0A0C10 실루엣으로 떨어뜨리고 대비는 역광이 만든다
+        set_draw_color(color_name)
 
     body_color = "flash" if hit else ("wall_light" if defeated else "actor_dark")
     set_boss_color("actor_dark")
@@ -777,10 +799,9 @@ def draw_boss_placeholder(
     set_boss_color("actor_dark")
     horn_start_y = min(head_y + 18 * scale, BOSS_CEILING_Y)
     horn_end_y = min(head_y + 48 * scale, BOSS_CEILING_Y)
-    draw_line(center_x - 30 * scale, horn_start_y, center_x - 48 * scale, horn_end_y)
-    draw_line(center_x + 30 * scale, horn_start_y, center_x + 48 * scale, horn_end_y)
-    draw_line(center_x - 20 * scale, body_bottom, center_x - 28 * scale, foot_y)
-    draw_line(center_x + 20 * scale, body_bottom, center_x + 28 * scale, foot_y)
+    # 뿔·팔은 1px 선이면 실루엣에서 사라진다. 굵기를 줘 윤곽선의 일부로 만든다
+    draw_thick_line(center_x - 26 * scale, horn_start_y - 6 * scale, center_x - 48 * scale, horn_end_y, 7 * scale, 2 * scale)
+    draw_thick_line(center_x + 26 * scale, horn_start_y - 6 * scale, center_x + 48 * scale, horn_end_y, 7 * scale, 2 * scale)
 
     shoulder_y = body_top - 12 * scale
 
@@ -788,9 +809,10 @@ def draw_boss_placeholder(
         shoulder_x = center_x + side * body_half_width
         elbow_screen_x = center_x + side * elbow_x * scale
         hand_screen_x = center_x + side * hand_x * scale
-        draw_line(shoulder_x, shoulder_y, elbow_screen_x, elbow_y)
-        draw_line(elbow_screen_x, elbow_y, hand_screen_x, hand_y)
-        draw_filled_circle(hand_screen_x, hand_y, 9 * scale)
+        draw_thick_line(shoulder_x, shoulder_y, elbow_screen_x, elbow_y, 16 * scale, 13 * scale)
+        draw_filled_circle(elbow_screen_x, elbow_y, 6.5 * scale)
+        draw_thick_line(elbow_screen_x, elbow_y, hand_screen_x, hand_y, 13 * scale, 11 * scale)
+        draw_filled_circle(hand_screen_x, hand_y, 11 * scale)
 
     if pose == "slam":
         hand_limit = BOSS_CEILING_Y - 9 * scale
