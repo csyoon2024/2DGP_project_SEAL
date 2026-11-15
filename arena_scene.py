@@ -82,15 +82,22 @@ ROOM_HALF_WIDTH = 760
 ROOM_NEAR_DEPTH = 1.6
 BACK_WALL_DEPTH = 0.40
 CEILING_HEIGHT = 1100
-BOSS_DEPTH = 0.50
-BOSS_CHARGE_DEPTH = 0.60
+# 0.50 → 0.55: 보스를 카메라 쪽으로 당겨 매몰선을 y≈330으로 내린다.
+#   매몰선 = 583 - (520 - 60) * 0.55 ≈ 330 → 보스가 y 330~615, 화면 세로 중앙에 든다
+BOSS_DEPTH = 0.55
+# 0.60 → 0.64: 돌진 끝에서 앞줄 먼 모서리(0.645) 바로 뒤까지만 나온다 (앞줄을 통과하지 않음)
+#   매몰선 = 583 - 460 * 0.64 ≈ 289, 평시보다 약 40px 앞으로 끌려 나온다
+BOSS_CHARGE_DEPTH = 0.64
 
 # 보스 단상 — 3단. 위로 갈수록 좁고 얕아진다.
 # (앞 깊이, 뒤 깊이, 아랫단 반폭, 윗면 높이, 옆면 경사폭)
+# 높이 90 → 60: 카메라를 낮춘 만큼 단상도 낮춰 보스를 화면 중앙에 둔다.
+# 앞 깊이 0.62: 단상 밑동(y≈261)이 앞줄 먼 모서리(y≈271) 뒤에 숨는다.
+# 맨 윗단 뒤 깊이 = BOSS_DEPTH: 보스가 윗단 뒤 가장자리에서 솟아난다.
 PEDESTAL_TIERS = (
-    (0.600, 0.440, 340, 30, 18),
-    (0.565, 0.450, 270, 60, 16),
-    (0.535, 0.460, 200, 90, 14),
+    (0.620, 0.530, 340, 20, 18),
+    (0.595, 0.540, 270, 40, 16),
+    (0.570, 0.550, 200, 60, 14),
 )
 PEDESTAL_TOP_ELEVATION = PEDESTAL_TIERS[-1][3]
 
@@ -210,6 +217,21 @@ def draw_polygon(points, colors=None):
         indices[triangle * 3 + 1] = triangle + 1
         indices[triangle * 3 + 2] = triangle + 2
     sdl2.SDL_RenderGeometry(renderer, None, vertices, count, indices, index_count)
+
+
+def set_clip_above(y):
+    """캔버스 y 이상만 그리게 클립한다 (pico2d 좌하단 원점 → SDL 좌상단 원점)."""
+    renderer = _pico2d_state.get("renderer")
+    if renderer is None:
+        return
+    height = max(0, int(round(HEIGHT - (y + DRAW_OFFSET_Y))))
+    sdl2.SDL_RenderSetClipRect(renderer, sdl2.SDL_Rect(0, 0, WIDTH, height))
+
+
+def clear_clip():
+    renderer = _pico2d_state.get("renderer")
+    if renderer is not None:
+        sdl2.SDL_RenderSetClipRect(renderer, None)
 
 
 def draw_filled_circle(x, y, radius):
@@ -550,18 +572,6 @@ def draw_pedestal():
         )
         previous_elevation = elevation
 
-    # 단상이 바닥에 드리우는 접지 그림자
-    front, _, half_width, _, _ = PEDESTAL_TIERS[0]
-    set_draw_rgb(6, 7, 11, 120)
-    draw_polygon(
-        (
-            project(-half_width - 20, front * 1.03),
-            project(half_width + 20, front * 1.03),
-            project(half_width, front),
-            project(-half_width, front),
-        ),
-        ((6, 7, 11, 0), (6, 7, 11, 0), (6, 7, 11, 140), (6, 7, 11, 140)),
-    )
 
 
 def draw_lane(lane_name,fill_color, edge_color, tick_count, opacity=0.85, saturation=0.7):
@@ -634,16 +644,26 @@ def draw_boss_placeholder(
     pose="idle",
     forward_progress=0.0,
     center_x=640,
-    base_foot_y=370,
+    burial_y=330,
 ):
+    """보스 1 — 땅에 반쯤 묻힌 거상 상반신.
+
+    burial_y(매몰선)는 몸통이 땅에서 나오는 높이다. 그 아래(다리·발치 그림자,
+    바닥에 박힌 손)는 클립해서 그리지 않는다.
+    """
     awakening_scale = BossController.AWAKENING_SIZE_SCALE if awakened else 1.0
     lunge_scale = 1.0 + (1.05 / 0.78 - 1.0) * forward_progress
-    # 각성은 40px, 돌진은 깊이를 따라 앞으로 끌려 나온다 (BOSS1_SPEC §2)
-    foot_y = base_foot_y - (40 if awakened else 0)
+    # 각성은 40px 앞으로 솟아오른다 (BOSS1_SPEC §2). 돌진은 burial_y 자체가 내려온다
+    burial_y -= 40 if awakened else 0
     desired_scale = BOSS_DISPLAY_SCALE * max(awakening_scale, lunge_scale)
-    visible_height = 214
-    max_visible_scale = (BOSS_CEILING_Y - foot_y) / visible_height
+    # 몸통 밑변(발치 + 34)이 매몰선에 오도록 발치를 매몰선 아래에 둔다.
+    # 보이는 높이는 몸통 밑변 ~ 뿔 끝 = 214 - 34 = 180 단위
+    body_offset = 34
+    visible_height = 214 - body_offset
+    max_visible_scale = (BOSS_CEILING_Y - burial_y) / visible_height
     scale = min(desired_scale, max_visible_scale)
+    foot_y = burial_y - body_offset * scale
+    set_clip_above(burial_y)
     body_half_width = 42 * scale
     body_bottom = foot_y + 34 * scale
     body_top = foot_y + 142 * scale
@@ -652,14 +672,6 @@ def draw_boss_placeholder(
     def set_boss_color(color_name):
         # 대기 원근: 채도 0.4 → 0.32 (20% 낮춤), 블루 틴트 0.45 → 0.55
         set_draw_color(color_name, round(255 * 0.6), 0.32, 0.55)
-
-    set_boss_color("shadow")
-    draw_filled_ellipse(
-        center_x,
-        foot_y + 2,
-        96 * scale,
-        16 * scale,
-    )
 
     body_color = "flash" if hit else ("wall_light" if defeated else "actor_dark")
     set_boss_color("actor_dark")
@@ -730,6 +742,11 @@ def draw_boss_placeholder(
     set_boss_color("accent_light" if awakened else "accent")
     draw_filled_circle(center_x - 10 * scale, head_y, 4 * scale)
     draw_filled_circle(center_x + 10 * scale, head_y, 4 * scale)
+    clear_clip()
+
+    # 매몰선의 흙더미 — 잘린 단면 대신 몸이 땅에 박혀 있는 것처럼 보이게
+    set_boss_color("shadow")
+    draw_filled_ellipse(center_x, burial_y, 66 * scale, 9 * scale)
 
 
 def draw_player_placeholder(screen_x, foot_y, scale):
