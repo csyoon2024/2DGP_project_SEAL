@@ -80,6 +80,11 @@ def set_draw_color(name, alpha=255):
     active_color = (*COLORS[name], alpha)
 
 
+def set_draw_rgb(red, green, blue, alpha=255):
+    global active_color
+    active_color = (int(red), int(green), int(blue), int(alpha))
+
+
 def draw_filled_circle(x, y, radius):
     pico_draw_circle(
         int(round(x + DRAW_OFFSET_X)),
@@ -136,30 +141,64 @@ def draw_rectangle(left, bottom, right, top):
 
 
 def draw_room():
-    set_draw_color("background")
-    draw_filled_rectangle(0, 0, WIDTH, HEIGHT)
+    horizon_y = 430
+    vanishing_x = WIDTH * 0.5
+    band_count = 36
+    top_color = (10, 12, 19)
+    bottom_color = (25, 30, 43)
 
-    set_draw_color("wall")
-    draw_filled_rectangle(0, 430, WIDTH, HEIGHT)
+    for band_index in range(band_count):
+        bottom = HEIGHT * band_index / band_count
+        top = HEIGHT * (band_index + 1) / band_count
+        blend = band_index / (band_count - 1)
+        color = tuple(
+            top_color[channel] * blend + bottom_color[channel] * (1 - blend)
+            for channel in range(3)
+        )
+        set_draw_rgb(*color)
+        draw_filled_rectangle(0, bottom, WIDTH, top)
 
-    set_draw_color("wall_light")
-    draw_line(0, 430, WIDTH, 430)
-    draw_line(0, 610, WIDTH, 610)
-    for panel_x in range(80, WIDTH, 160):
-        draw_line(panel_x, 475, panel_x, 700)
+    floor_bands = 32
+    floor_bottom_color = (33, 39, 54)
+    floor_horizon_color = (17, 21, 31)
+    for band_index in range(floor_bands):
+        depth_bottom = band_index / floor_bands
+        depth_top = (band_index + 1) / floor_bands
+        y_bottom = horizon_y * depth_bottom
+        y_top = horizon_y * depth_top
+        bottom_half_width = WIDTH * 0.5 - (WIDTH * 0.5 - 16) * depth_bottom
+        top_half_width = WIDTH * 0.5 - (WIDTH * 0.5 - 16) * depth_top
+        blend = (depth_bottom + depth_top) * 0.5
+        color = tuple(
+            floor_bottom_color[channel] * (1 - blend)
+            + floor_horizon_color[channel] * blend
+            for channel in range(3)
+        )
+        set_draw_rgb(*color)
+        draw_filled_rectangle(
+            vanishing_x - bottom_half_width,
+            y_bottom,
+            vanishing_x + bottom_half_width,
+            y_top,
+        )
 
-    set_draw_color("floor")
-    draw_filled_rectangle(0, 0, WIDTH, 430)
-
-    set_draw_color("floor_line")
-    for floor_y in (35, 430):
-        draw_line(0, floor_y, WIDTH, floor_y)
+    set_draw_color("floor_line", 78)
+    draw_line(0, 0, vanishing_x, horizon_y)
+    draw_line(WIDTH, 0, vanishing_x, horizon_y)
     for floor_x in range(0, WIDTH + 1, 160):
-        draw_line(floor_x, 0, floor_x, 430)
+        draw_line(floor_x, 0, vanishing_x, horizon_y)
 
-    set_draw_color("wall_light")
-    draw_rectangle(112, 0, 1168, 602)
-    draw_line(112, 404, 1168, 404)
+    for row_index in range(1, 15):
+        normalized = row_index / 15
+        depth = 1 - (1 - normalized) ** 1.8
+        row_y = horizon_y * depth
+        half_width = WIDTH * 0.5 - (WIDTH * 0.5 - 16) * depth
+        draw_line(vanishing_x - half_width, row_y, vanishing_x + half_width, row_y)
+
+    set_draw_color("wall_light", 34)
+    draw_filled_rectangle(0, 398, WIDTH, 458)
+    set_draw_color("wall_light", 110)
+    draw_line(0, horizon_y, WIDTH, horizon_y)
 
 
 def draw_lane(lane, fill_color, edge_color, tick_count):
