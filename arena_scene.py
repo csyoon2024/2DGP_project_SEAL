@@ -75,9 +75,20 @@ PLAYER_MAX_HEALTH = 3
 DEBUG_GAUGE_STEP = 0.05
 
 
-def set_draw_color(name, alpha=255):
+def set_draw_color(name, alpha=255, saturation=1.0, blue_tint=0.0):
     global active_color
-    active_color = (*COLORS[name], alpha)
+    color = COLORS[name]
+    luminance = 0.2126 * color[0] + 0.7152 * color[1] + 0.0722 * color[2]
+    desaturated = tuple(
+        luminance + (channel - luminance) * saturation
+        for channel in color
+    )
+    blue_color = (30, 55, 95)
+    tinted = tuple(
+        channel * (1.0 - blue_tint) + blue * blue_tint
+        for channel, blue in zip(desaturated, blue_color)
+    )
+    active_color = (*tuple(round(channel) for channel in tinted), alpha)
 
 
 def set_draw_rgb(red, green, blue, alpha=255):
@@ -201,17 +212,28 @@ def draw_room():
     draw_line(0, horizon_y, WIDTH, horizon_y)
 
 
-def draw_lane(lane, fill_color, edge_color, tick_count):
+def draw_lane(lane, fill_color, edge_color, tick_count, opacity=0.85, saturation=0.7):
     left = lane["left"]
     right = lane["right"]
     bottom = lane["bottom"]
     top = lane["top"]
     center_y = lane["center_y"]
 
-    set_draw_color(fill_color)
+    layer_alpha = round(255 * opacity)
+    if lane["scale"] < 1.0:
+        set_draw_color("shadow", 105, 0.6)
+        draw_filled_ellipse(
+            (left + right) * 0.5,
+            bottom - 4,
+            (right - left) * 0.48,
+            15,
+        )
+        draw_filled_rectangle(left + 18, bottom - 12, right - 18, bottom + 2)
+
+    set_draw_color(fill_color, layer_alpha, saturation)
     draw_filled_rectangle(left, bottom, right, top)
 
-    set_draw_color(edge_color)
+    set_draw_color(edge_color, layer_alpha, saturation)
     draw_rectangle(left, bottom, right, top)
     draw_line(left, center_y, right, center_y)
 
@@ -288,7 +310,16 @@ def draw_boss_placeholder(
     body_top = foot_y + 142 * scale
     head_y = foot_y + 166 * scale
 
-    set_draw_color("shadow")
+    def set_boss_color(color_name):
+        set_draw_color(color_name, round(255 * 0.6), 0.4, 0.45)
+
+    set_boss_color("shadow")
+    draw_filled_ellipse(
+        center_x,
+        430,
+        128 * scale,
+        34 * scale,
+    )
     draw_filled_rectangle(
         center_x - 55 * scale,
         470,
@@ -297,7 +328,7 @@ def draw_boss_placeholder(
     )
 
     body_color = "flash" if hit else ("wall_light" if defeated else "actor_dark")
-    set_draw_color("actor_dark")
+    set_boss_color("actor_dark")
     draw_filled_rectangle(
         center_x - body_half_width - 8 * scale,
         body_bottom - 8 * scale,
@@ -306,7 +337,7 @@ def draw_boss_placeholder(
     )
     draw_filled_circle(center_x, head_y, 34 * scale)
 
-    set_draw_color(body_color)
+    set_boss_color(body_color)
     draw_filled_rectangle(
         center_x - body_half_width,
         body_bottom,
@@ -315,7 +346,7 @@ def draw_boss_placeholder(
     )
     draw_filled_circle(center_x, head_y, 27 * scale)
 
-    set_draw_color("actor_dark")
+    set_boss_color("actor_dark")
     horn_start_y = min(head_y + 18 * scale, HEIGHT - 1)
     horn_end_y = min(head_y + 48 * scale, HEIGHT - 1)
     draw_line(center_x - 30 * scale, horn_start_y, center_x - 48 * scale, horn_end_y)
@@ -357,10 +388,10 @@ def draw_boss_placeholder(
         draw_arm(-1, 56, foot_y + 108 * scale, 78, foot_y + 82 * scale)
         draw_arm(1, 56, foot_y + 108 * scale, 78, foot_y + 82 * scale)
 
-    set_draw_color("accent")
+    set_boss_color("accent")
     draw_line(center_x - 22 * scale, body_top - 36 * scale, center_x + 22 * scale, body_top - 36 * scale)
     draw_line(center_x - 24 * scale, body_top - 46 * scale, center_x + 24 * scale, body_top - 46 * scale)
-    set_draw_color("accent_light" if awakened else "accent")
+    set_boss_color("accent_light" if awakened else "accent")
     draw_filled_circle(center_x - 10 * scale, head_y, 4 * scale)
     draw_filled_circle(center_x + 10 * scale, head_y, 4 * scale)
 
@@ -372,15 +403,13 @@ def draw_player_placeholder(screen_x, foot_y, scale):
     body_top = foot_y + 56 * scale
     shoulder_y = foot_y + 49 * scale
 
-    set_draw_color("shadow")
-    draw_filled_circle(screen_x - 17 * scale, foot_y + 3 * scale, 4 * scale)
-    draw_filled_rectangle(
-        screen_x - 17 * scale,
-        foot_y - scale,
-        screen_x + 17 * scale,
-        foot_y + 7 * scale,
+    set_draw_color("shadow", 170, 0.7)
+    draw_filled_ellipse(
+        screen_x,
+        foot_y + 3 * scale,
+        24 * scale,
+        8 * scale,
     )
-    draw_filled_circle(screen_x + 17 * scale, foot_y + 3 * scale, 4 * scale)
 
     set_draw_color("actor_dark")
     draw_filled_circle(screen_x, foot_y + 70 * scale, 15 * scale)
@@ -838,10 +867,6 @@ class ArenaScene:
             DRAW_OFFSET_Y = 0
 
         draw_room()
-        draw_perspective_rails()
-        draw_lane(LANES["platform_2"], "rear_lane", "rear_edge", 10)
-        draw_lane(LANES["platform_1"], "front_lane", "front_edge", 8)
-
         boss_pose = "idle"
         if self.boss.current_pattern is not None:
             boss_pose = PATTERNS[self.boss.current_pattern]["pose"]
@@ -863,6 +888,11 @@ class ArenaScene:
             self.boss.forward_progress,
             boss_screen_x,
         )
+
+        draw_perspective_rails()
+        draw_lane(LANES["platform_2"], "rear_lane", "rear_edge", 10)
+        draw_lane(LANES["platform_1"], "front_lane", "front_edge", 8)
+
         self.draw_boss_status()
         self.draw_seal_gauge()
         self.draw_boss_telegraph()
@@ -925,7 +955,7 @@ class ArenaScene:
             draw_filled_circle(slash_end_x, slash_end_y, 8 * player_scale)
 
         if self.debug_hitboxes_visible:
-            set_draw_color("accent_light", 255 if visible else 45)
+            set_draw_color("accent_light")
             draw_rectangle(
                 screen_x - 25 * player_scale,
                 player_y,
