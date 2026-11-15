@@ -1,8 +1,10 @@
 import os
 import math
 import random
+from ctypes import c_int
 
 import pico2d
+import sdl2
 
 from seal_gauge import SealGauge
 from pico2d import (
@@ -37,27 +39,6 @@ COLORS = {
     "shadow": (12, 14, 20),
 }
 
-LANES = {
-    "platform_2": {
-        "left": 0,
-        "right": WIDTH,
-        "bottom": 0,
-        "top": 120,
-        "center_y": 60,
-        "scale": 1.0,
-        "perspective": 0.18,
-    },
-    "platform_1": {
-        "left": WIDTH // 20,
-        "right": WIDTH - WIDTH // 20,
-        "bottom": 195,
-        "top": 285,
-        "center_y": 240,
-        "scale": 0.71,
-        "perspective": 0.18,
-    },
-}
-
 PLAYER_SPEED = 320
 PLAYER_LOGICAL_WIDTH = 900
 PLAYER_X_MIN = 25
@@ -76,6 +57,85 @@ HEAVY_ATTACK_DURATION = 0.70
 PLAYER_MAX_HEALTH = 3
 DEBUG_GAUGE_STEP = 0.05
 BOSS_DISPLAY_SCALE = 1.5
+
+# ---------------------------------------------------------------------------
+# 원근 카메라 — 화면의 모든 평면은 이 한 점으로 수렴한다.
+#
+# depth(s)는 "카메라에서 멀수록 작아지는 배율"이다. 뒷줄(카메라 쪽) 1.0,
+# 앞줄(보스 쪽) 0.71. 월드 좌표 (X, 높이 E, 깊이 s)는
+#   screen_x = VANISHING_X + X * s
+#   screen_y = VANISHING_Y - (CAMERA_HEIGHT - E) * s
+# 로 투영된다. s가 0으로 가면 모든 점이 소실점에 모인다.
+# 게임플레이는 여전히 논리 x 0~900만 쓴다. 이 블록은 그리기 전용이다.
+# ---------------------------------------------------------------------------
+VANISHING_X = WIDTH / 2
+VANISHING_Y = 660
+CAMERA_HEIGHT = 580
+LANE_HALF_WIDTH = 590
+ROOM_HALF_WIDTH = 760
+ROOM_NEAR_DEPTH = 1.6
+BACK_WALL_DEPTH = 0.40
+CEILING_HEIGHT = 1100
+BOSS_DEPTH = 0.50
+BOSS_CHARGE_DEPTH = 0.60
+
+LANES = {
+    "platform_2": {
+        "near": 1.10,
+        "far": 0.90,
+        "scale": 1.0,
+        "elevation": 22,
+    },
+    "platform_1": {
+        "near": 0.78,
+        "far": 0.645,
+        "scale": 0.71,
+        "elevation": 40,
+    },
+}
+
+
+def project(world_x, depth, elevation=0.0):
+    return (
+        VANISHING_X + world_x * depth,
+        VANISHING_Y - (CAMERA_HEIGHT - elevation) * depth,
+    )
+
+
+def logical_to_world_x(logical_x):
+    return (logical_x / PLAYER_LOGICAL_WIDTH - 0.5) * 2 * LANE_HALF_WIDTH
+
+
+def logical_pixels(depth):
+    """논리 x 1이 해당 깊이에서 화면 몇 px인지."""
+    return 2 * LANE_HALF_WIDTH / PLAYER_LOGICAL_WIDTH * depth
+
+
+def lane_point(lane_name, logical_x, depth=None):
+    lane = LANES[lane_name]
+    if depth is None:
+        depth = lane["scale"]
+    return project(logical_to_world_x(logical_x), depth, lane["elevation"])
+
+
+def lane_quad(lane_name, logical_left=0, logical_right=PLAYER_LOGICAL_WIDTH):
+    """레인 윗면의 사다리꼴: 앞-왼, 앞-오, 뒤-오, 뒤-왼."""
+    lane = LANES[lane_name]
+    left = logical_to_world_x(logical_left)
+    right = logical_to_world_x(logical_right)
+    return (
+        project(left, lane["near"], lane["elevation"]),
+        project(right, lane["near"], lane["elevation"]),
+        project(right, lane["far"], lane["elevation"]),
+        project(left, lane["far"], lane["elevation"]),
+    )
+
+
+def boss_anchor(position_x, forward_progress):
+    """보스 발치(매몰선)의 화면 좌표와 깊이."""
+    depth = BOSS_DEPTH + (BOSS_CHARGE_DEPTH - BOSS_DEPTH) * forward_progress
+    x, y = project(logical_to_world_x(position_x), depth)
+    return x, y, depth
 
 
 def set_draw_color(name, alpha=255, saturation=1.0, blue_tint=0.0):
@@ -99,6 +159,34 @@ def set_draw_rgb(red, green, blue, alpha=255):
     active_color = (int(red), int(green), int(blue), int(alpha))
 
 
+_pico2d_state = pico2d.open_canvas.__globals__
+
+
+def draw_polygon(points, colors=None):
+    """볼록 다각형을 한 번의 SDL_RenderGeometry 호출로 채운다.
+
+    colors를 꼭짓점마다 주면 GPU가 그라데이션을 보간한다.
+    """
+    renderer = _pico2d_state.get("renderer")
+    count = len(points)
+    if renderer is None or count < 3:
+        return
+    vertices = (sdl2.SDL_Vertex * count)()
+    for index, (x, y) in enumerate(points):
+        red, green, blue, alpha = colors[index] if colors else active_color
+        vertex = vertices[index]
+        vertex.position.x = x + DRAW_OFFSET_X
+        vertex.position.y = HEIGHT - (y + DRAW_OFFSET_Y)
+        vertex.color = sdl2.SDL_Color(int(red), int(green), int(blue), int(alpha))
+    index_count = (count - 2) * 3
+    indices = (c_int * index_count)()
+    for triangle in range(count - 2):
+        indices[triangle * 3] = 0
+        indices[triangle * 3 + 1] = triangle + 1
+        indices[triangle * 3 + 2] = triangle + 2
+    sdl2.SDL_RenderGeometry(renderer, None, vertices, count, indices, index_count)
+
+
 def draw_filled_circle(x, y, radius):
     pico_draw_circle(
         int(round(x + DRAW_OFFSET_X)),
@@ -109,18 +197,15 @@ def draw_filled_circle(x, y, radius):
     )
 
 
-def draw_filled_ellipse(center_x, center_y, radius_x, radius_y):
-    radius_x = max(1, int(round(radius_x)))
-    radius_y = max(1, int(round(radius_y)))
-    for y_offset in range(-radius_y, radius_y + 1):
-        normalized_y = y_offset / radius_y
-        half_width = radius_x * math.sqrt(max(0.0, 1.0 - normalized_y**2))
-        draw_line(
-            center_x - half_width,
-            center_y + y_offset,
-            center_x + half_width,
-            center_y + y_offset,
+def draw_filled_ellipse(center_x, center_y, radius_x, radius_y, segments=28):
+    points = [
+        (
+            center_x + radius_x * math.cos(2 * math.pi * index / segments),
+            center_y + radius_y * math.sin(2 * math.pi * index / segments),
         )
+        for index in range(segments)
+    ]
+    draw_polygon(points)
 
 
 def draw_filled_rectangle(left, bottom, right, top):
@@ -154,180 +239,121 @@ def draw_rectangle(left, bottom, right, top):
     )
 
 
+def draw_polyline(points, closed=True):
+    count = len(points)
+    for index in range(count if closed else count - 1):
+        x1, y1 = points[index]
+        x2, y2 = points[(index + 1) % count]
+        draw_line(x1, y1, x2, y2)
+
+
 def draw_room():
-    horizon_y = 430
-    vanishing_x = WIDTH * 0.5
-    band_count = 36
-    top_color = (10, 12, 19)
-    bottom_color = (25, 30, 43)
+    wall_y = VANISHING_Y - CAMERA_HEIGHT * BACK_WALL_DEPTH
+    wall_half = ROOM_HALF_WIDTH * BACK_WALL_DEPTH
 
-    for band_index in range(band_count):
-        bottom = HEIGHT * band_index / band_count
-        top = HEIGHT * (band_index + 1) / band_count
-        blend = band_index / (band_count - 1)
-        color = tuple(
-            top_color[channel] * blend + bottom_color[channel] * (1 - blend)
-            for channel in range(3)
-        )
-        set_draw_rgb(*color)
-        draw_filled_rectangle(0, bottom, WIDTH, top)
+    # 뒷벽 — 위로 갈수록 어두워지는 수직 그라데이션
+    draw_polygon(
+        (
+            (VANISHING_X - wall_half, wall_y),
+            (VANISHING_X + wall_half, wall_y),
+            (VANISHING_X + wall_half, HEIGHT),
+            (VANISHING_X - wall_half, HEIGHT),
+        ),
+        ((24, 28, 40, 255), (24, 28, 40, 255), (10, 12, 18, 255), (10, 12, 18, 255)),
+    )
 
-    floor_bands = 32
-    floor_bottom_color = (33, 39, 54)
-    floor_horizon_color = (17, 21, 31)
-    for band_index in range(floor_bands):
-        depth_bottom = band_index / floor_bands
-        depth_top = (band_index + 1) / floor_bands
-        y_bottom = horizon_y * depth_bottom
-        y_top = horizon_y * depth_top
-        bottom_half_width = WIDTH * 0.5 - (WIDTH * 0.5 - 16) * depth_bottom
-        top_half_width = WIDTH * 0.5 - (WIDTH * 0.5 - 16) * depth_top
-        blend = (depth_bottom + depth_top) * 0.5
-        color = tuple(
-            floor_bottom_color[channel] * (1 - blend)
-            + floor_horizon_color[channel] * blend
-            for channel in range(3)
-        )
-        set_draw_rgb(*color)
-        draw_filled_rectangle(
-            vanishing_x - bottom_half_width,
-            y_bottom,
-            vanishing_x + bottom_half_width,
-            y_top,
+    # 좌우 벽 — 카메라 쪽이 밝고 소실점 쪽이 어둡다
+    for side in (-1, 1):
+        near_floor = project(side * ROOM_HALF_WIDTH, ROOM_NEAR_DEPTH)
+        far_floor = project(side * ROOM_HALF_WIDTH, BACK_WALL_DEPTH)
+        far_top = project(side * ROOM_HALF_WIDTH, BACK_WALL_DEPTH, CEILING_HEIGHT)
+        near_top = project(side * ROOM_HALF_WIDTH, ROOM_NEAR_DEPTH, CEILING_HEIGHT)
+        draw_polygon(
+            (near_floor, far_floor, far_top, near_top),
+            ((30, 35, 50, 255), (18, 21, 30, 255), (10, 12, 18, 255), (14, 16, 24, 255)),
         )
 
-    set_draw_color("floor_line", 78)
-    draw_line(0, 0, vanishing_x, horizon_y)
-    draw_line(WIDTH, 0, vanishing_x, horizon_y)
-    for floor_x in range(0, WIDTH + 1, 160):
-        draw_line(floor_x, 0, vanishing_x, horizon_y)
+    # 바닥 — 카메라 쪽 밝게, 뒷벽 쪽 어둡게
+    floor = (
+        project(-ROOM_HALF_WIDTH, ROOM_NEAR_DEPTH),
+        project(ROOM_HALF_WIDTH, ROOM_NEAR_DEPTH),
+        project(ROOM_HALF_WIDTH, BACK_WALL_DEPTH),
+        project(-ROOM_HALF_WIDTH, BACK_WALL_DEPTH),
+    )
+    near_color = (36, 42, 58, 255)
+    far_color = (17, 20, 30, 255)
+    draw_polygon(floor, (near_color, near_color, far_color, far_color))
 
-    for row_index in range(1, 15):
-        normalized = row_index / 15
-        depth = 1 - (1 - normalized) ** 1.8
-        row_y = horizon_y * depth
-        half_width = WIDTH * 0.5 - (WIDTH * 0.5 - 16) * depth
-        draw_line(vanishing_x - half_width, row_y, vanishing_x + half_width, row_y)
+    # 바닥 격자 — 세로줄은 전부 소실점으로, 가로줄은 깊이 간격이 좁아진다
+    set_draw_color("floor_line", 70)
+    grid_step = 2 * ROOM_HALF_WIDTH / 10
+    for line_index in range(11):
+        world_x = -ROOM_HALF_WIDTH + grid_step * line_index
+        draw_line(
+            *project(world_x, ROOM_NEAR_DEPTH),
+            *project(world_x, BACK_WALL_DEPTH),
+        )
+    near_distance = 1.0 / ROOM_NEAR_DEPTH
+    far_distance = 1.0 / BACK_WALL_DEPTH
+    row_count = 14
+    for row_index in range(1, row_count):
+        distance = near_distance + (far_distance - near_distance) * row_index / row_count
+        depth = 1.0 / distance
+        draw_line(
+            *project(-ROOM_HALF_WIDTH, depth),
+            *project(ROOM_HALF_WIDTH, depth),
+        )
 
-    set_draw_color("wall_light", 34)
-    draw_filled_rectangle(0, 398, WIDTH, 458)
-    set_draw_color("wall_light", 110)
-    draw_line(0, horizon_y, WIDTH, horizon_y)
+    # 벽과 바닥이 만나는 모서리
+    set_draw_color("wall_light", 150)
+    for side in (-1, 1):
+        draw_line(
+            *project(side * ROOM_HALF_WIDTH, ROOM_NEAR_DEPTH),
+            *project(side * ROOM_HALF_WIDTH, BACK_WALL_DEPTH),
+        )
+        draw_line(
+            *project(side * ROOM_HALF_WIDTH, BACK_WALL_DEPTH),
+            *project(side * ROOM_HALF_WIDTH, BACK_WALL_DEPTH, CEILING_HEIGHT),
+        )
+    draw_line(VANISHING_X - wall_half, wall_y, VANISHING_X + wall_half, wall_y)
 
 
-def draw_lane(lane, fill_color, edge_color, tick_count, opacity=0.85, saturation=0.7):
-    left = lane["left"]
-    right = lane["right"]
-    bottom = lane["bottom"]
-    top = lane["top"]
-    center_y = lane["center_y"]
-
+def draw_lane(lane_name, fill_color, edge_color, tick_count, opacity=0.85, saturation=0.7):
+    lane = LANES[lane_name]
     layer_alpha = round(255 * opacity)
-    perspective = lane.get("perspective", 0.0)
+    near_left, near_right, far_right, far_left = lane_quad(lane_name)
 
-    def horizontal_edges(y):
-        depth = max(0.0, min((y - bottom) / (top - bottom), 1.0))
-        half_width = (right - left) * 0.5 * (1.0 - perspective * depth)
-        midpoint = (left + right) * 0.5
-        return midpoint - half_width, midpoint + half_width
-
-    if perspective:
-        set_draw_color("shadow", 105, 0.6)
-        thickness = round(14 * lane["scale"])
-        if bottom > 0:
-            draw_filled_ellipse(
-                (left + right) * 0.5,
-                bottom - 4,
-                (right - left) * 0.48,
-                15,
-            )
-            draw_filled_rectangle(left + 18, bottom - thickness, right - 18, bottom + 2)
-        else:
-            draw_filled_rectangle(left + 18, bottom, right - 18, bottom + thickness)
-
-    if perspective:
-        strip_count = 18
-        for strip_index in range(strip_count):
-            strip_bottom = bottom + (top - bottom) * strip_index / strip_count
-            strip_top = bottom + (top - bottom) * (strip_index + 1) / strip_count
-            bottom_left, bottom_right = horizontal_edges(strip_bottom)
-            top_left, top_right = horizontal_edges(strip_top)
-            set_draw_color(fill_color, layer_alpha, saturation)
-            draw_filled_rectangle(
-                (bottom_left + top_left) * 0.5,
-                strip_bottom,
-                (bottom_right + top_right) * 0.5,
-                strip_top,
-            )
-    else:
-        set_draw_color(fill_color, layer_alpha, saturation)
-        draw_filled_rectangle(left, bottom, right, top)
+    # 윗면 — 카메라 쪽이 조금 더 밝다
+    set_draw_color(fill_color, layer_alpha, saturation)
+    far_rgba = active_color
+    near_rgba = tuple(min(255, round(channel * 1.25)) for channel in far_rgba[:3]) + (
+        layer_alpha,
+    )
+    draw_polygon(
+        (near_left, near_right, far_right, far_left),
+        (near_rgba, near_rgba, far_rgba, far_rgba),
+    )
 
     set_draw_color(edge_color, layer_alpha, saturation)
-    bottom_left, bottom_right = horizontal_edges(bottom)
-    top_left, top_right = horizontal_edges(top)
-    center_left, center_right = horizontal_edges(center_y)
-    draw_line(bottom_left, bottom, top_left, top)
-    draw_line(bottom_right, bottom, top_right, top)
-    draw_line(top_left, top, top_right, top)
-    draw_line(center_left, center_y, center_right, center_y)
+    draw_polyline((near_left, near_right, far_right, far_left))
+    center_left = lane_point(lane_name, 0)
+    center_right = lane_point(lane_name, PLAYER_LOGICAL_WIDTH)
+    draw_line(*center_left, *center_right)
 
-    tick_step = (right - left) / tick_count
+    # 분할선 — 소실점을 향해 기운다
+    inset = 0.06
+    near_depth = lane["near"] - (lane["near"] - lane["far"]) * inset
+    far_depth = lane["far"] + (lane["near"] - lane["far"]) * inset
     for tick in range(1, tick_count):
-        tick_ratio = tick / tick_count
-        tick_bottom_x = bottom_left + (bottom_right - bottom_left) * tick_ratio
-        tick_top_x = top_left + (top_right - top_left) * tick_ratio
-        draw_line(tick_bottom_x, bottom + 10, tick_top_x, top - 10)
+        logical_x = PLAYER_LOGICAL_WIDTH * tick / tick_count
+        draw_line(
+            *lane_point(lane_name, logical_x, near_depth),
+            *lane_point(lane_name, logical_x, far_depth),
+        )
 
     marker_radius = max(3, int(5 * lane["scale"]))
-    for marker_x in (center_left + 18, center_right - 18):
-        draw_filled_circle(marker_x, center_y, marker_radius)
-
-
-def draw_perspective_rails():
-    platform_2 = LANES["platform_2"]
-    platform_1 = LANES["platform_1"]
-
-    set_draw_color("wall_light")
-    draw_line(
-        platform_2["left"],
-        platform_2["bottom"],
-        platform_1["left"],
-        platform_1["bottom"],
-    )
-    draw_line(
-        platform_2["right"],
-        platform_2["bottom"],
-        platform_1["right"],
-        platform_1["bottom"],
-    )
-
-    set_draw_color("floor_line")
-    draw_line(
-        platform_2["left"],
-        platform_2["top"],
-        platform_1["left"],
-        platform_1["top"],
-    )
-    draw_line(
-        platform_2["right"],
-        platform_2["top"],
-        platform_1["right"],
-        platform_1["top"],
-    )
-
-
-def draw_boss_marker(hit=False):
-    set_draw_color("actor_dark")
-    draw_filled_circle(640, 480, 38)
-    set_draw_color("accent_light" if hit else "accent")
-    draw_filled_circle(640, 480, 28)
-    set_draw_color("actor_dark")
-    draw_filled_circle(640, 480, 20)
-    set_draw_color("accent_light")
-    draw_line(640, 449, 640, 511)
-    draw_line(609, 480, 671, 480)
-    draw_filled_circle(640, 480, 5)
+    for logical_x in (18, PLAYER_LOGICAL_WIDTH - 18):
+        draw_filled_circle(*lane_point(lane_name, logical_x), marker_radius)
 
 
 def draw_boss_placeholder(
@@ -337,10 +363,12 @@ def draw_boss_placeholder(
     pose="idle",
     forward_progress=0.0,
     center_x=640,
+    base_foot_y=370,
 ):
     awakening_scale = BossController.AWAKENING_SIZE_SCALE if awakened else 1.0
     lunge_scale = 1.0 + (1.05 / 0.78 - 1.0) * forward_progress
-    foot_y = min(270 if awakened else 390, 390 - 60 * forward_progress)
+    # 각성은 40px, 돌진은 깊이를 따라 앞으로 끌려 나온다 (BOSS1_SPEC §2)
+    foot_y = base_foot_y - (40 if awakened else 0)
     desired_scale = BOSS_DISPLAY_SCALE * max(awakening_scale, lunge_scale)
     visible_height = 214
     max_visible_scale = (HEIGHT - foot_y - 1) / visible_height
@@ -356,15 +384,9 @@ def draw_boss_placeholder(
     set_boss_color("shadow")
     draw_filled_ellipse(
         center_x,
-        430,
-        128 * scale,
-        34 * scale,
-    )
-    draw_filled_rectangle(
-        center_x - 55 * scale,
-        470,
-        center_x + 55 * scale,
-        482,
+        foot_y + 2,
+        96 * scale,
+        16 * scale,
     )
 
     body_color = "flash" if hit else ("wall_light" if defeated else "actor_dark")
@@ -652,11 +674,9 @@ class ArenaScene:
             else SealGauge.BOSS_HIT_LOSS
         )
         self.seal_gauge.player_hit(hit_loss)
-        lane = LANES[self.player_lane]
-        player_screen_x = lane["left"] + self.player_logical_x * (
-            lane["right"] - lane["left"]
-        ) / PLAYER_LOGICAL_WIDTH
-        self.trigger_impact_flash(player_screen_x, lane["center_y"])
+        self.trigger_impact_flash(
+            *lane_point(self.player_lane, self.player_logical_x)
+        )
         self.trigger_screen_shake(8, 0.15)
         return True
 
@@ -820,16 +840,13 @@ class ArenaScene:
             shake_strength, shake_duration = PATTERNS[boss_attack.pattern]["shake"]
             if boss_attack.pattern == "slam_double":
                 shake_strength = 6 if boss_attack.hit_index == 0 else 8
-            impact_lane = LANES[boss_attack.target_lane or self.player_lane]
             impact_x = boss_attack.target_x
             if impact_x is None:
-                impact_screen_x = WIDTH / 2
-            else:
-                impact_screen_x = impact_lane["left"] + impact_x * (
-                    impact_lane["right"] - impact_lane["left"]
-                ) / PLAYER_LOGICAL_WIDTH
+                impact_x = BOSS_LOGICAL_X
             self.trigger_screen_shake(shake_strength, shake_duration)
-            self.trigger_impact_flash(impact_screen_x, impact_lane["center_y"])
+            self.trigger_impact_flash(
+                *lane_point(boss_attack.target_lane or self.player_lane, impact_x)
+            )
             self.resolve_boss_attack(boss_attack)
 
         if self.player_health <= 0 or self.seal_gauge.boss_won:
@@ -917,10 +934,10 @@ class ArenaScene:
                 elif self.boss.current_pattern == "shockwave":
                     boss_pose = "shockwave_impact"
 
-        boss_lane = LANES["platform_1"]
-        boss_screen_x = boss_lane["left"] + self.boss.position_x * (
-            boss_lane["right"] - boss_lane["left"]
-        ) / PLAYER_LOGICAL_WIDTH
+        boss_screen_x, boss_foot_y, _ = boss_anchor(
+            self.boss.position_x,
+            self.boss.forward_progress,
+        )
         draw_boss_placeholder(
             self.boss.awakened,
             self.boss_hit_timer > 0,
@@ -928,11 +945,11 @@ class ArenaScene:
             boss_pose,
             self.boss.forward_progress,
             boss_screen_x,
+            boss_foot_y,
         )
 
-        draw_perspective_rails()
-        draw_lane(LANES["platform_2"], "rear_lane", "rear_edge", 10)
-        draw_lane(LANES["platform_1"], "front_lane", "front_edge", 8)
+        draw_lane("platform_1", "front_lane", "front_edge", 8)
+        draw_lane("platform_2", "rear_lane", "rear_edge", 10)
 
         self.draw_boss_status()
         self.draw_seal_gauge()
@@ -942,8 +959,8 @@ class ArenaScene:
         self.draw_impact_flash()
 
         lane = LANES[self.player_lane]
-        player_y = lane["center_y"]
         player_scale = lane["scale"]
+        player_elevation = lane["elevation"]
 
         if self.lane_transition_target is not None:
             target_lane = LANES[self.lane_transition_target]
@@ -951,17 +968,17 @@ class ArenaScene:
                 self.lane_transition_elapsed / LANE_SWITCH_DURATION,
                 1.0,
             )
-            player_y += (target_lane["center_y"] - player_y) * progress
             player_scale += (target_lane["scale"] - player_scale) * progress
-            lane_left = lane["left"] + (target_lane["left"] - lane["left"]) * progress
-            lane_right = lane["right"] + (target_lane["right"] - lane["right"]) * progress
-        else:
-            lane_left = lane["left"]
-            lane_right = lane["right"]
+            player_elevation += (
+                target_lane["elevation"] - player_elevation
+            ) * progress
 
-        screen_x = lane_left + self.player_logical_x * (
-            lane_right - lane_left
-        ) / PLAYER_LOGICAL_WIDTH
+        screen_x, player_y = project(
+            logical_to_world_x(self.player_logical_x),
+            player_scale,
+            player_elevation,
+        )
+        platform_scale = logical_pixels(player_scale)
         draw_player_placeholder(screen_x, player_y, player_scale)
         self.draw_player_health()
 
@@ -973,7 +990,6 @@ class ArenaScene:
                 else HEAVY_ATTACK_DURATION
             )
             reach_progress = min(self.attack_elapsed / (attack_duration * 0.45), 1.0)
-            platform_scale = (lane_right - lane_left) / PLAYER_LOGICAL_WIDTH
             slash_start_x = screen_x + self.facing_direction * 8 * player_scale
             slash_end_x = screen_x + self.facing_direction * (
                 BASIC_ATTACK_REACH * platform_scale * reach_progress
@@ -1005,15 +1021,16 @@ class ArenaScene:
             )
 
             if self.player_lane == "platform_1":
-                platform_scale = (lane_right - lane_left) / PLAYER_LOGICAL_WIDTH
-                boss_screen_x = lane_left + self.boss.position_x * platform_scale
+                boss_screen_x = screen_x + (
+                    self.boss.position_x - self.player_logical_x
+                ) * platform_scale
                 boss_half_width = BOSS_HITBOX_HALF_WIDTH * platform_scale
                 set_draw_color("accent")
                 draw_rectangle(
                     boss_screen_x - boss_half_width,
-                    435,
+                    player_y,
                     boss_screen_x + boss_half_width,
-                    525,
+                    player_y + 90 * player_scale,
                 )
 
                 if self.attack_type is not None:
@@ -1025,9 +1042,9 @@ class ArenaScene:
                         attack_right = self.player_logical_x
                     set_draw_color("accent_light")
                     draw_rectangle(
-                        lane_left + attack_left * platform_scale,
+                        screen_x + (attack_left - self.player_logical_x) * platform_scale,
                         player_y + 20 * player_scale,
-                        lane_left + attack_right * platform_scale,
+                        screen_x + (attack_right - self.player_logical_x) * platform_scale,
                         player_y + 70 * player_scale,
                     )
 
@@ -1122,45 +1139,23 @@ class ArenaScene:
         marker_alpha = int(60 + 140 * progress) if visible else 60
 
         if pattern["marker"] == "lane":
-            target_lane = LANES[self.boss.target_lane]
+            quad = lane_quad(self.boss.target_lane)
             set_draw_color("accent", fill_alpha)
-            draw_filled_rectangle(
-                target_lane["left"],
-                target_lane["bottom"],
-                target_lane["right"],
-                target_lane["top"],
-            )
+            draw_polygon(quad)
             set_draw_color("accent_light")
-            draw_rectangle(
-                target_lane["left"],
-                target_lane["bottom"],
-                target_lane["right"],
-                target_lane["top"],
-            )
+            draw_polyline(quad)
             return
 
         if pattern["marker"] == "column":
-            target_x = self.boss.target_x
-            set_draw_color("accent", fill_alpha)
+            half_width = pattern["hitbox_width"] * 0.5
+            left = self.boss.target_x - half_width
+            right = self.boss.target_x + half_width
             for lane_name in ("platform_1", "platform_2"):
-                lane = LANES[lane_name]
-                scale = (lane["right"] - lane["left"]) / PLAYER_LOGICAL_WIDTH
-                center_x = lane["left"] + target_x * scale
-                half_width = pattern["hitbox_width"] * scale * 0.5
-                draw_filled_rectangle(
-                    center_x - half_width,
-                    lane["bottom"],
-                    center_x + half_width,
-                    lane["top"],
-                )
-                set_draw_color("accent_light", 255 if visible else 45)
-                draw_rectangle(
-                    center_x - half_width,
-                    lane["bottom"],
-                    center_x + half_width,
-                    lane["top"],
-                )
+                quad = lane_quad(lane_name, left, right)
                 set_draw_color("accent", fill_alpha)
+                draw_polygon(quad)
+                set_draw_color("accent_light", 255 if visible else 45)
+                draw_polyline(quad)
             return
 
         targets = [(self.boss.target_lane, self.boss.target_x)]
@@ -1169,46 +1164,45 @@ class ArenaScene:
 
         for target_lane_name, target_x in targets:
             target_lane = LANES[target_lane_name]
-            scale = (target_lane["right"] - target_lane["left"]) / PLAYER_LOGICAL_WIDTH
-            screen_x = target_lane["left"] + target_x * scale
+            scale = logical_pixels(target_lane["scale"])
+            screen_x, screen_y = lane_point(target_lane_name, target_x)
             growth = 1.0 - 0.5 * progress
             set_draw_color("accent", marker_alpha)
             draw_filled_ellipse(
                 screen_x,
-                target_lane["center_y"] + 4,
+                screen_y,
                 80 * growth * scale,
                 18 * growth * target_lane["scale"],
             )
             set_draw_color("accent_light", 255 if visible else 45)
             draw_rectangle(
                 screen_x - 2,
-                target_lane["center_y"] - 3,
+                screen_y - 3,
                 screen_x + 2,
-                target_lane["center_y"] + 3,
+                screen_y + 3,
             )
 
     def draw_homing_projectile(self):
         if self.boss.current_pattern != "homing" or self.boss.state != "active":
             return
 
-        lane = LANES[self.boss.target_lane]
-        lane_scale = (lane["right"] - lane["left"]) / PLAYER_LOGICAL_WIDTH
-        target_x = lane["left"] + self.boss.target_x * lane_scale
+        target_x, target_y = lane_point(self.boss.target_lane, self.boss.target_x)
         progress = min(
             self.boss.attack_elapsed / PATTERNS["homing"]["duration"],
             1.0,
         )
-        boss_lane = LANES["platform_1"]
-        boss_screen_x = boss_lane["left"] + self.boss.position_x * (
-            boss_lane["right"] - boss_lane["left"]
-        ) / PLAYER_LOGICAL_WIDTH
+        boss_screen_x, boss_foot_y, _ = boss_anchor(
+            self.boss.position_x,
+            self.boss.forward_progress,
+        )
+        launch_y = boss_foot_y + 220
         projectile_x = boss_screen_x + (target_x - boss_screen_x) * progress
-        projectile_y = 620 + (lane["center_y"] - 620) * progress
+        projectile_y = launch_y + (target_y - launch_y) * progress
 
         set_draw_color("accent", 100)
         draw_filled_ellipse(
             target_x,
-            lane["center_y"] + 4,
+            target_y,
             80 - 40 * progress,
             16 - 8 * progress,
         )
@@ -1223,40 +1217,37 @@ class ArenaScene:
         pattern = PATTERNS[pattern_name]
         progress = min(self.boss.attack_elapsed / pattern["duration"], 1.0)
         if pattern["marker"] == "column" and self.boss.target_x is not None:
+            half_width = pattern["hitbox_width"] * 0.5
             set_draw_color("flash", 190)
             for lane_name in ("platform_1", "platform_2"):
-                lane = LANES[lane_name]
-                scale = (lane["right"] - lane["left"]) / PLAYER_LOGICAL_WIDTH
-                center_x = lane["left"] + self.boss.target_x * scale
-                half_width = pattern["hitbox_width"] * scale * 0.5
-                draw_filled_rectangle(
-                    center_x - half_width,
-                    lane["bottom"],
-                    center_x + half_width,
-                    lane["top"],
+                draw_polygon(
+                    lane_quad(
+                        lane_name,
+                        self.boss.target_x - half_width,
+                        self.boss.target_x + half_width,
+                    )
                 )
         elif pattern["marker"] == "lane":
-            lane = LANES[self.boss.target_lane]
-            lane_center = (lane["left"] + lane["right"]) * 0.5
-            wave_offset = (lane["right"] - lane["left"]) * 0.5 * progress
-            half_width = max(10, (lane["right"] - lane["left"]) * 0.018)
+            wave_offset = PLAYER_LOGICAL_WIDTH * 0.5 * progress
+            half_width = 12
             set_draw_color("flash", 220)
-            for wave_center in (lane_center - wave_offset, lane_center + wave_offset):
-                draw_filled_rectangle(
-                    wave_center - half_width,
-                    lane["bottom"],
-                    wave_center + half_width,
-                    lane["top"],
+            for wave_center in (BOSS_LOGICAL_X - wave_offset, BOSS_LOGICAL_X + wave_offset):
+                draw_polygon(
+                    lane_quad(
+                        self.boss.target_lane,
+                        wave_center - half_width,
+                        wave_center + half_width,
+                    )
                 )
         elif pattern["marker"] == "two_spots" and self.boss.next_hit_index == 1:
             lane = LANES["platform_1"]
-            scale = (lane["right"] - lane["left"]) / PLAYER_LOGICAL_WIDTH
-            target_x = lane["left"] + self.boss.secondary_target_x * scale
+            scale = logical_pixels(lane["scale"])
+            target_x, target_y = lane_point("platform_1", self.boss.secondary_target_x)
             marker_progress = min(progress / 0.65, 1.0)
             set_draw_color("accent_light", int(90 + 110 * marker_progress))
             draw_filled_ellipse(
                 target_x,
-                lane["center_y"] + 4,
+                target_y,
                 80 * (1.0 - 0.5 * marker_progress) * scale,
                 18 * (1.0 - 0.5 * marker_progress) * lane["scale"],
             )
