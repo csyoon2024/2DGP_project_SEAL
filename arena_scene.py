@@ -229,47 +229,98 @@ def draw_boss_marker(hit=False):
     draw_filled_circle(640, 480, 5)
 
 
-def draw_boss_placeholder(awakened=False, hit=False, defeated=False):
-    scale = BossController.AWAKENING_SIZE_SCALE if awakened else 1.0
-    foot_y = 400 if awakened else 480
+def draw_boss_placeholder(
+    awakened=False,
+    hit=False,
+    defeated=False,
+    pose="idle",
+    forward_progress=0.0,
+    center_x=640,
+):
+    awakening_scale = BossController.AWAKENING_SIZE_SCALE if awakened else 1.0
+    lunge_scale = 1.0 + (1.05 / 0.78 - 1.0) * forward_progress
+    scale = max(awakening_scale, lunge_scale)
+    foot_y = min(440 if awakened else 480, 480 - 60 * forward_progress)
     body_half_width = 42 * scale
     body_bottom = foot_y + 34 * scale
     body_top = foot_y + 142 * scale
     head_y = foot_y + 166 * scale
 
     set_draw_color("shadow")
-    draw_filled_rectangle(640 - 55 * scale, 470, 640 + 55 * scale, 482)
+    draw_filled_rectangle(
+        center_x - 55 * scale,
+        470,
+        center_x + 55 * scale,
+        482,
+    )
 
-    body_color = "actor_light" if hit else ("wall_light" if defeated else "accent")
+    body_color = "actor_light" if hit else ("wall_light" if defeated else "actor_dark")
     set_draw_color("actor_dark")
     draw_filled_rectangle(
-        640 - body_half_width - 8 * scale,
+        center_x - body_half_width - 8 * scale,
         body_bottom - 8 * scale,
-        640 + body_half_width + 8 * scale,
+        center_x + body_half_width + 8 * scale,
         body_top + 8 * scale,
     )
-    draw_filled_circle(640, head_y, 34 * scale)
+    draw_filled_circle(center_x, head_y, 34 * scale)
 
     set_draw_color(body_color)
     draw_filled_rectangle(
-        640 - body_half_width,
+        center_x - body_half_width,
         body_bottom,
-        640 + body_half_width,
+        center_x + body_half_width,
         body_top,
     )
-    draw_filled_circle(640, head_y, 27 * scale)
+    draw_filled_circle(center_x, head_y, 27 * scale)
 
     set_draw_color("actor_dark")
-    draw_line(640 - 30 * scale, head_y + 18 * scale, 640 - 48 * scale, head_y + 48 * scale)
-    draw_line(640 + 30 * scale, head_y + 18 * scale, 640 + 48 * scale, head_y + 48 * scale)
-    draw_line(640 - body_half_width, body_top - 8 * scale, 640 - 72 * scale, foot_y + 88 * scale)
-    draw_line(640 + body_half_width, body_top - 8 * scale, 640 + 72 * scale, foot_y + 88 * scale)
-    draw_line(640 - 20 * scale, body_bottom, 640 - 28 * scale, foot_y)
-    draw_line(640 + 20 * scale, body_bottom, 640 + 28 * scale, foot_y)
+    horn_start_y = min(head_y + 18 * scale, HEIGHT - 1)
+    horn_end_y = min(head_y + 48 * scale, HEIGHT - 1)
+    draw_line(center_x - 30 * scale, horn_start_y, center_x - 48 * scale, horn_end_y)
+    draw_line(center_x + 30 * scale, horn_start_y, center_x + 48 * scale, horn_end_y)
+    draw_line(center_x - 20 * scale, body_bottom, center_x - 28 * scale, foot_y)
+    draw_line(center_x + 20 * scale, body_bottom, center_x + 28 * scale, foot_y)
 
-    set_draw_color("accent_light")
-    draw_filled_circle(640 - 10 * scale, head_y, 4 * scale)
-    draw_filled_circle(640 + 10 * scale, head_y, 4 * scale)
+    shoulder_y = body_top - 12 * scale
+
+    def draw_arm(side, elbow_x, elbow_y, hand_x, hand_y):
+        shoulder_x = center_x + side * body_half_width
+        elbow_screen_x = center_x + side * elbow_x * scale
+        hand_screen_x = center_x + side * hand_x * scale
+        draw_line(shoulder_x, shoulder_y, elbow_screen_x, elbow_y)
+        draw_line(elbow_screen_x, elbow_y, hand_screen_x, hand_y)
+        draw_filled_circle(hand_screen_x, hand_y, 9 * scale)
+
+    if pose == "slam":
+        draw_arm(-1, 58, min(foot_y + 177 * scale, HEIGHT - 45), 64, min(foot_y + 220 * scale, HEIGHT - 12))
+        draw_arm(1, 58, foot_y + 105 * scale, 75, foot_y + 78 * scale)
+    elif pose == "slam_double":
+        raised_elbow_y = min(foot_y + 177 * scale, HEIGHT - 45)
+        raised_hand_y = min(foot_y + 220 * scale, HEIGHT - 12)
+        draw_arm(-1, 58, raised_elbow_y, 64, raised_hand_y)
+        draw_arm(1, 58, raised_elbow_y, 64, raised_hand_y)
+    elif pose == "shockwave":
+        draw_arm(-1, 75, foot_y + 142 * scale, 112, foot_y + 142 * scale)
+        draw_arm(1, 75, foot_y + 142 * scale, 112, foot_y + 142 * scale)
+    elif pose == "charge":
+        draw_arm(-1, 54, foot_y + 125 * scale, 26, foot_y + 104 * scale)
+        draw_arm(1, 54, foot_y + 125 * scale, 26, foot_y + 104 * scale)
+    elif pose == "homing":
+        draw_arm(-1, 56, foot_y + 116 * scale, 38, foot_y + 84 * scale)
+        draw_arm(1, 76, foot_y + 144 * scale, 126, foot_y + 150 * scale)
+    elif pose in ("slam_impact", "shockwave_impact"):
+        draw_arm(-1, 68, foot_y + 76 * scale, 90, foot_y + 12 * scale)
+        draw_arm(1, 68, foot_y + 76 * scale, 90, foot_y + 12 * scale)
+    else:
+        draw_arm(-1, 56, foot_y + 108 * scale, 78, foot_y + 82 * scale)
+        draw_arm(1, 56, foot_y + 108 * scale, 78, foot_y + 82 * scale)
+
+    set_draw_color("accent")
+    draw_line(center_x - 22 * scale, body_top - 36 * scale, center_x + 22 * scale, body_top - 36 * scale)
+    draw_line(center_x - 24 * scale, body_top - 46 * scale, center_x + 24 * scale, body_top - 46 * scale)
+    set_draw_color("accent_light" if awakened else "accent")
+    draw_filled_circle(center_x - 10 * scale, head_y, 4 * scale)
+    draw_filled_circle(center_x + 10 * scale, head_y, 4 * scale)
 
 
 def draw_player_placeholder(screen_x, foot_y, scale):
@@ -536,8 +587,8 @@ class ArenaScene:
             attack_left = self.player_logical_x - BASIC_ATTACK_REACH
             attack_right = self.player_logical_x
 
-        boss_left = BOSS_LOGICAL_X - BOSS_HITBOX_HALF_WIDTH
-        boss_right = BOSS_LOGICAL_X + BOSS_HITBOX_HALF_WIDTH
+        boss_left = self.boss.position_x - BOSS_HITBOX_HALF_WIDTH
+        boss_right = self.boss.position_x + BOSS_HITBOX_HALF_WIDTH
         return attack_left <= boss_right and attack_right >= boss_left
 
     def update(self, fixed_delta):
@@ -695,10 +746,27 @@ class ArenaScene:
         draw_perspective_rails()
         draw_lane(LANES["platform_2"], "rear_lane", "rear_edge", 10)
         draw_lane(LANES["platform_1"], "front_lane", "front_edge", 8)
+
+        boss_pose = "idle"
+        if self.boss.current_pattern is not None:
+            boss_pose = PATTERNS[self.boss.current_pattern]["pose"]
+            if self.boss.state in ("active", "recovery"):
+                if self.boss.current_pattern in ("slam", "slam_double"):
+                    boss_pose = "slam_impact"
+                elif self.boss.current_pattern == "shockwave":
+                    boss_pose = "shockwave_impact"
+
+        boss_lane = LANES["platform_1"]
+        boss_screen_x = boss_lane["left"] + self.boss.position_x * (
+            boss_lane["right"] - boss_lane["left"]
+        ) / PLAYER_LOGICAL_WIDTH
         draw_boss_placeholder(
             self.boss.awakened,
             self.boss_hit_timer > 0,
             self.boss_defeated,
+            boss_pose,
+            self.boss.forward_progress,
+            boss_screen_x,
         )
         self.draw_boss_status()
         self.draw_seal_gauge()
@@ -760,7 +828,7 @@ class ArenaScene:
             draw_filled_circle(slash_end_x, slash_end_y, 8 * player_scale)
 
         if self.debug_hitboxes_visible:
-            set_draw_color("accent_light")
+            set_draw_color("accent_light", 255 if visible else 45)
             draw_rectangle(
                 screen_x - 25 * player_scale,
                 player_y,
@@ -770,7 +838,7 @@ class ArenaScene:
 
             if self.player_lane == "platform_1":
                 platform_scale = (lane_right - lane_left) / PLAYER_LOGICAL_WIDTH
-                boss_screen_x = lane_left + BOSS_LOGICAL_X * platform_scale
+                boss_screen_x = lane_left + self.boss.position_x * platform_scale
                 boss_half_width = BOSS_HITBOX_HALF_WIDTH * platform_scale
                 set_draw_color("accent")
                 draw_rectangle(
@@ -914,7 +982,7 @@ class ArenaScene:
                     center_x + half_width,
                     lane["top"],
                 )
-                set_draw_color("accent_light")
+                set_draw_color("accent_light", 255 if visible else 45)
                 draw_rectangle(
                     center_x - half_width,
                     lane["bottom"],
@@ -940,7 +1008,7 @@ class ArenaScene:
                 80 * growth * scale,
                 18 * growth * target_lane["scale"],
             )
-            set_draw_color("accent_light")
+            set_draw_color("accent_light", 255 if visible else 45)
             draw_rectangle(
                 screen_x - 2,
                 target_lane["center_y"] - 3,
@@ -959,8 +1027,12 @@ class ArenaScene:
             self.boss.attack_elapsed / PATTERNS["homing"]["duration"],
             1.0,
         )
-        projectile_x = 640 + (target_x - 640) * progress
-        projectile_y = 500 + (lane["center_y"] - 500) * progress
+        boss_lane = LANES["platform_1"]
+        boss_screen_x = boss_lane["left"] + self.boss.position_x * (
+            boss_lane["right"] - boss_lane["left"]
+        ) / PLAYER_LOGICAL_WIDTH
+        projectile_x = boss_screen_x + (target_x - boss_screen_x) * progress
+        projectile_y = 620 + (lane["center_y"] - 620) * progress
 
         set_draw_color("accent", 100)
         draw_filled_ellipse(
@@ -996,6 +1068,4 @@ class ArenaScene:
             state = "AWAKENED" if self.boss.awakened else "NORMAL"
             pattern = self.boss.current_pattern or "WAIT"
             status = f"BOSS PHASE {self.boss_phase}  {state}  {pattern.upper()}"
-        self.debug_font.draw(24, HEIGHT - 40, status, (240, 230, 215))
-        status = "BOSS DEFEATED" if self.boss_defeated else f"BOSS  PHASE {self.boss_phase}"
         self.debug_font.draw(24, HEIGHT - 40, status, (240, 230, 215))

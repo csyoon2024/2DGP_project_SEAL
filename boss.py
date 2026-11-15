@@ -15,6 +15,7 @@ PHASE_PATTERNS = {
         "slam_double": 10,
     },
 }
+BOSS_HOME_X = 450
 
 PATTERNS = {
     "slam": {
@@ -118,6 +119,10 @@ class BossController:
         self.telegraph_elapsed = 0.0
         self.secondary_target_x = None
         self.forward_progress = 0.0
+        self.position_x = BOSS_HOME_X
+        self.charge_target_x = BOSS_HOME_X
+        self.position_x = BOSS_HOME_X
+        self.charge_target_x = BOSS_HOME_X
         self.forward_progress = 0.0
 
     def begin_awakening_demo(self):
@@ -148,6 +153,9 @@ class BossController:
                     0.0,
                     self.forward_progress - fixed_delta / self.PATTERN_GAP,
                 )
+                self.position_x = self.charge_target_x + (
+                    BOSS_HOME_X - self.charge_target_x
+                ) * (1.0 - self.forward_progress)
             if self.timer <= 1e-9:
                 self._begin_pattern(phase, player_lane, player_x, rng, forced_pattern)
             return attacks
@@ -172,6 +180,9 @@ class BossController:
             elif self.current_pattern == "charge":
                 duration = PATTERNS["charge"]["duration"]
                 self.forward_progress = min(self.attack_elapsed / duration, 1.0)
+                self.position_x = BOSS_HOME_X + (
+                    self.charge_target_x - BOSS_HOME_X
+                ) * self.forward_progress
             attacks.extend(self._collect_attacks(self.attack_elapsed))
             if self.timer <= 1e-9:
                 self.state = "recovery"
@@ -216,6 +227,7 @@ class BossController:
             self.target_lane = "platform_1"
         elif pattern == "charge":
             self.target_x = player_x
+            self.charge_target_x = player_x
             self.target_lane = None
         elif pattern == "shockwave":
             self.target_lane = player_lane
