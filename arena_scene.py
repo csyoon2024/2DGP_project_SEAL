@@ -73,6 +73,7 @@ BASIC_ATTACK_REACH = 120
 HEAVY_ATTACK_DURATION = 0.70
 PLAYER_MAX_HEALTH = 3
 DEBUG_GAUGE_STEP = 0.05
+BOSS_DISPLAY_SCALE = 1.5
 
 
 def set_draw_color(name, alpha=255, saturation=1.0, blue_tint=0.0):
@@ -220,6 +221,14 @@ def draw_lane(lane, fill_color, edge_color, tick_count, opacity=0.85, saturation
     center_y = lane["center_y"]
 
     layer_alpha = round(255 * opacity)
+    perspective = 0.18 if lane["scale"] < 1.0 else 0.0
+
+    def horizontal_edges(y):
+        depth = max(0.0, min((y - bottom) / (top - bottom), 1.0))
+        half_width = (right - left) * 0.5 * (1.0 - perspective * depth)
+        midpoint = (left + right) * 0.5
+        return midpoint - half_width, midpoint + half_width
+
     if lane["scale"] < 1.0:
         set_draw_color("shadow", 105, 0.6)
         draw_filled_ellipse(
@@ -230,20 +239,42 @@ def draw_lane(lane, fill_color, edge_color, tick_count, opacity=0.85, saturation
         )
         draw_filled_rectangle(left + 18, bottom - 12, right - 18, bottom + 2)
 
-    set_draw_color(fill_color, layer_alpha, saturation)
-    draw_filled_rectangle(left, bottom, right, top)
+    if perspective:
+        strip_count = 18
+        for strip_index in range(strip_count):
+            strip_bottom = bottom + (top - bottom) * strip_index / strip_count
+            strip_top = bottom + (top - bottom) * (strip_index + 1) / strip_count
+            bottom_left, bottom_right = horizontal_edges(strip_bottom)
+            top_left, top_right = horizontal_edges(strip_top)
+            set_draw_color(fill_color, layer_alpha, saturation)
+            draw_filled_rectangle(
+                (bottom_left + top_left) * 0.5,
+                strip_bottom,
+                (bottom_right + top_right) * 0.5,
+                strip_top,
+            )
+    else:
+        set_draw_color(fill_color, layer_alpha, saturation)
+        draw_filled_rectangle(left, bottom, right, top)
 
     set_draw_color(edge_color, layer_alpha, saturation)
-    draw_rectangle(left, bottom, right, top)
-    draw_line(left, center_y, right, center_y)
+    bottom_left, bottom_right = horizontal_edges(bottom)
+    top_left, top_right = horizontal_edges(top)
+    center_left, center_right = horizontal_edges(center_y)
+    draw_line(bottom_left, bottom, top_left, top)
+    draw_line(bottom_right, bottom, top_right, top)
+    draw_line(top_left, top, top_right, top)
+    draw_line(center_left, center_y, center_right, center_y)
 
     tick_step = (right - left) / tick_count
     for tick in range(1, tick_count):
-        tick_x = left + tick * tick_step
-        draw_line(tick_x, bottom + 12, tick_x, top - 12)
+        tick_ratio = tick / tick_count
+        tick_bottom_x = bottom_left + (bottom_right - bottom_left) * tick_ratio
+        tick_top_x = top_left + (top_right - top_left) * tick_ratio
+        draw_line(tick_bottom_x, bottom + 10, tick_top_x, top - 10)
 
     marker_radius = max(3, int(5 * lane["scale"]))
-    for marker_x in (left + 18, right - 18):
+    for marker_x in (center_left + 18, center_right - 18):
         draw_filled_circle(marker_x, center_y, marker_radius)
 
 
@@ -303,8 +334,11 @@ def draw_boss_placeholder(
 ):
     awakening_scale = BossController.AWAKENING_SIZE_SCALE if awakened else 1.0
     lunge_scale = 1.0 + (1.05 / 0.78 - 1.0) * forward_progress
-    scale = max(awakening_scale, lunge_scale)
-    foot_y = min(440 if awakened else 480, 480 - 60 * forward_progress)
+    foot_y = min(270 if awakened else 390, 390 - 60 * forward_progress)
+    desired_scale = BOSS_DISPLAY_SCALE * max(awakening_scale, lunge_scale)
+    visible_height = 214
+    max_visible_scale = (HEIGHT - foot_y - 1) / visible_height
+    scale = min(desired_scale, max_visible_scale)
     body_half_width = 42 * scale
     body_bottom = foot_y + 34 * scale
     body_top = foot_y + 142 * scale
@@ -365,11 +399,13 @@ def draw_boss_placeholder(
         draw_filled_circle(hand_screen_x, hand_y, 9 * scale)
 
     if pose == "slam":
-        draw_arm(-1, 58, min(foot_y + 177 * scale, HEIGHT - 45), 64, min(foot_y + 220 * scale, HEIGHT - 12))
+        hand_limit = HEIGHT - 9 * scale
+        draw_arm(-1, 58, min(foot_y + 177 * scale, hand_limit - 9 * scale), 64, min(foot_y + 220 * scale, hand_limit))
         draw_arm(1, 58, foot_y + 105 * scale, 75, foot_y + 78 * scale)
     elif pose == "slam_double":
-        raised_elbow_y = min(foot_y + 177 * scale, HEIGHT - 45)
-        raised_hand_y = min(foot_y + 220 * scale, HEIGHT - 12)
+        hand_limit = HEIGHT - 9 * scale
+        raised_elbow_y = min(foot_y + 177 * scale, hand_limit - 9 * scale)
+        raised_hand_y = min(foot_y + 220 * scale, hand_limit)
         draw_arm(-1, 58, raised_elbow_y, 64, raised_hand_y)
         draw_arm(1, 58, raised_elbow_y, 64, raised_hand_y)
     elif pose == "shockwave":
