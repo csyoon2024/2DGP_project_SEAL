@@ -533,7 +533,6 @@ class ArenaScene:
         self.debug_invulnerability_enabled = False
         self.debug_phase = 1
         self.debug_phase_jump_request = None
-        self.debug_seal_gauge = 0.5
         self.debug_forced_pattern = None
         self.debug_pattern_seed_fixed = False
         self.debug_pattern_seed = 1

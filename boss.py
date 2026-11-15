@@ -32,7 +32,7 @@ PATTERNS = {
         "shake": (6, 0.12),
     },
     "charge": {
-        "kind": "piercing",
+        "kind": "pierce",
         "telegraph": 0.70,
         "duration": 0.40,
         "recovery": 1.00,
@@ -45,7 +45,7 @@ PATTERNS = {
         "shake": (12, 0.25),
     },
     "shockwave": {
-        "kind": "lane",
+        "kind": "wide",
         "telegraph": 1.00,
         "duration": 0.20,
         "recovery": 0.50,
@@ -122,9 +122,6 @@ class BossController:
         self.forward_progress = 0.0
         self.position_x = BOSS_HOME_X
         self.charge_target_x = BOSS_HOME_X
-        self.position_x = BOSS_HOME_X
-        self.charge_target_x = BOSS_HOME_X
-        self.forward_progress = 0.0
 
     def begin_awakening_demo(self):
         self.awakened = True
