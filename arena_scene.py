@@ -300,7 +300,11 @@ def draw_void():
     draw_filled_rectangle(0, 0, WIDTH, HEIGHT)
 
 
-def draw_room():
+def draw_room(with_floor=True):
+    """뒷벽·좌우 벽, 그리고 with_floor면 바닥과 격자까지.
+
+    플랫폼을 보이드에 띄우는 지금은 with_floor=False로 벽만 그린다.
+    """
     wall_y = VANISHING_Y - CAMERA_HEIGHT * BACK_WALL_DEPTH
     wall_half = ROOM_HALF_WIDTH * BACK_WALL_DEPTH
 
@@ -326,6 +330,24 @@ def draw_room():
             ((30, 35, 50, 255), (18, 21, 30, 255), (10, 12, 18, 255), (14, 16, 24, 255)),
         )
 
+    if with_floor:
+        draw_floor_tiles()
+
+    # 벽과 바닥이 만나는 모서리 — 바닥이 없어도 벽의 밑동선으로 공간을 잡아 준다
+    set_draw_color("wall_light", 150)
+    for side in (-1, 1):
+        draw_line(
+            *project(side * ROOM_HALF_WIDTH, ROOM_NEAR_DEPTH),
+            *project(side * ROOM_HALF_WIDTH, BACK_WALL_DEPTH),
+        )
+        draw_line(
+            *project(side * ROOM_HALF_WIDTH, BACK_WALL_DEPTH),
+            *project(side * ROOM_HALF_WIDTH, BACK_WALL_DEPTH, CEILING_HEIGHT),
+        )
+    draw_line(VANISHING_X - wall_half, wall_y, VANISHING_X + wall_half, wall_y)
+
+
+def draw_floor_tiles():
     # 바닥 — 카메라 쪽 밝게, 뒷벽 쪽 어둡게
     floor = (
         project(-ROOM_HALF_WIDTH, ROOM_NEAR_DEPTH),
@@ -356,19 +378,6 @@ def draw_room():
             *project(-ROOM_HALF_WIDTH, depth),
             *project(ROOM_HALF_WIDTH, depth),
         )
-
-    # 벽과 바닥이 만나는 모서리
-    set_draw_color("wall_light", 150)
-    for side in (-1, 1):
-        draw_line(
-            *project(side * ROOM_HALF_WIDTH, ROOM_NEAR_DEPTH),
-            *project(side * ROOM_HALF_WIDTH, BACK_WALL_DEPTH),
-        )
-        draw_line(
-            *project(side * ROOM_HALF_WIDTH, BACK_WALL_DEPTH),
-            *project(side * ROOM_HALF_WIDTH, BACK_WALL_DEPTH, CEILING_HEIGHT),
-        )
-    draw_line(VANISHING_X - wall_half, wall_y, VANISHING_X + wall_half, wall_y)
 
 
 def draw_back_fog():
@@ -416,8 +425,8 @@ def draw_back_fog():
     )
 
 
-def draw_pillars():
-    """좌우 기둥. 먼 것부터 그린다. 앞면 + 안쪽 옆면 + 바닥 그림자."""
+def draw_pillars(with_floor=True):
+    """좌우 기둥. 먼 것부터 그린다. 앞면 + 안쪽 옆면 (+ with_floor면 바닥 그림자)."""
     for depth in PILLAR_DEPTHS:
         back_depth = 1.0 / (1.0 / depth + PILLAR_THICKNESS)
         for side in (-1, 1):
@@ -426,20 +435,21 @@ def draw_pillars():
             shadow_depth = depth * 1.10
 
             # 바닥 그림자 — 뒤쪽 보스의 빛을 등지고 카메라 쪽으로 길게 눕는다
-            draw_polygon(
-                (
-                    project(outer, depth),
-                    project(inner, depth),
-                    project(inner + side * 30, shadow_depth),
-                    project(outer, shadow_depth),
-                ),
-                (
-                    (5, 6, 10, 170),
-                    (5, 6, 10, 170),
-                    (5, 6, 10, 0),
-                    (5, 6, 10, 0),
-                ),
-            )
+            if with_floor:
+                draw_polygon(
+                    (
+                        project(outer, depth),
+                        project(inner, depth),
+                        project(inner + side * 30, shadow_depth),
+                        project(outer, shadow_depth),
+                    ),
+                    (
+                        (5, 6, 10, 170),
+                        (5, 6, 10, 170),
+                        (5, 6, 10, 0),
+                        (5, 6, 10, 0),
+                    ),
+                )
 
             # 안쪽 옆면 — 화면 중앙을 향한 면. 어둡고 깊이 쪽으로 더 어둡다
             draw_polygon(
@@ -1214,6 +1224,10 @@ class ArenaScene:
             DRAW_OFFSET_Y = 0
 
         draw_void()
+        # 바닥 타일만 빼고 벽·기둥·안개는 그린다. 바닥 자리는 보이드로 남는다
+        draw_room(with_floor=False)
+        draw_pillars(with_floor=False)
+        draw_back_fog()
         draw_pedestal()
         boss_pose = "idle"
         if self.boss.current_pattern is not None:
