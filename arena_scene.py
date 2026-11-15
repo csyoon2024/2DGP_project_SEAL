@@ -1,4 +1,5 @@
 import os
+import math
 import random
 
 import pico2d
@@ -16,21 +17,21 @@ WIDTH = 1280
 HEIGHT = 720
 
 COLORS = {
-    "background": (17, 22, 23),
-    "wall": (27, 35, 35),
-    "wall_light": (43, 53, 49),
-    "floor": (31, 39, 38),
-    "floor_line": (52, 62, 57),
-    "rear_lane": (37, 61, 58),
-    "rear_edge": (101, 151, 129),
-    "front_lane": (54, 68, 58),
-    "front_edge": (177, 190, 130),
-    "accent": (235, 119, 86),
-    "accent_light": (255, 195, 126),
-    "actor_dark": (18, 24, 25),
-    "actor": (225, 112, 78),
-    "actor_light": (247, 211, 165),
-    "shadow": (20, 27, 26),
+    "background": (12, 14, 20),
+    "wall": (18, 21, 31),
+    "wall_light": (42, 48, 65),
+    "floor": (30, 36, 54),
+    "floor_line": (54, 62, 82),
+    "rear_lane": (22, 34, 46),
+    "rear_edge": (74, 158, 255),
+    "front_lane": (58, 35, 24),
+    "front_edge": (255, 107, 53),
+    "accent": (224, 28, 44),
+    "accent_light": (255, 107, 53),
+    "actor_dark": (10, 12, 16),
+    "actor": (10, 12, 16),
+    "actor_light": (74, 158, 255),
+    "shadow": (12, 14, 20),
 }
 
 LANES = {
@@ -71,9 +72,9 @@ PLAYER_MAX_HEALTH = 3
 DEBUG_GAUGE_STEP = 0.05
 
 
-def set_draw_color(name):
+def set_draw_color(name, alpha=255):
     global active_color
-    active_color = COLORS[name]
+    active_color = (*COLORS[name], alpha)
 
 
 def draw_filled_circle(x, y, radius):
@@ -84,6 +85,20 @@ def draw_filled_circle(x, y, radius):
         *active_color,
         filled=True,
     )
+
+
+def draw_filled_ellipse(center_x, center_y, radius_x, radius_y):
+    radius_x = max(1, int(round(radius_x)))
+    radius_y = max(1, int(round(radius_y)))
+    for y_offset in range(-radius_y, radius_y + 1):
+        normalized_y = y_offset / radius_y
+        half_width = radius_x * math.sqrt(max(0.0, 1.0 - normalized_y**2))
+        draw_line(
+            center_x - half_width,
+            center_y + y_offset,
+            center_x + half_width,
+            center_y + y_offset,
+        )
 
 
 def draw_filled_rectangle(left, bottom, right, top):
@@ -653,11 +668,11 @@ class ArenaScene:
         if self.player_health <= 0:
             return False
 
-        if attack.kind == "lane":
+        if attack.kind == "wide":
             overlaps = self.player_lane == attack.target_lane
         else:
             lane_matches = (
-                attack.kind == "piercing"
+                attack.kind == "pierce"
                 or self.player_lane == attack.target_lane
             )
             target_x = attack.target_x if attack.target_x is not None else BOSS_LOGICAL_X
@@ -688,6 +703,7 @@ class ArenaScene:
         self.draw_boss_status()
         self.draw_seal_gauge()
         self.draw_boss_telegraph()
+        self.draw_homing_projectile()
 
         lane = LANES[self.player_lane]
         player_y = lane["center_y"]
@@ -860,8 +876,21 @@ class ArenaScene:
             return
 
         pattern = PATTERNS[self.boss.current_pattern]
-        if pattern["kind"] == "lane":
+        visible = self.boss.telegraph_is_visible()
+        elapsed = self.boss.telegraph_elapsed
+        progress = min(elapsed / pattern["telegraph"], 1.0)
+        fill_alpha = 90 if visible else 0
+        marker_alpha = int(60 + 140 * progress) if visible else 60
+
+        if pattern["marker"] == "lane":
             target_lane = LANES[self.boss.target_lane]
+            set_draw_color("accent", fill_alpha)
+            draw_filled_rectangle(
+                target_lane["left"],
+                target_lane["bottom"],
+                target_lane["right"],
+                target_lane["top"],
+            )
             set_draw_color("accent_light")
             draw_rectangle(
                 target_lane["left"],
@@ -871,32 +900,77 @@ class ArenaScene:
             )
             return
 
-        if self.boss.current_pattern in ("slam", "double_slam"):
-            target_lane = LANES["platform_1"]
-            target_x = BOSS_LOGICAL_X
-        elif pattern["kind"] == "piercing":
-            target_lane = LANES["platform_1"]
-            target_x = BOSS_LOGICAL_X
-        else:
-            target_lane = LANES[self.boss.target_lane]
-            target_x = self.boss.target_x or BOSS_LOGICAL_X
+        if pattern["marker"] == "column":
+            target_x = self.boss.target_x
+            set_draw_color("accent", fill_alpha)
+            for lane_name in ("platform_1", "platform_2"):
+                lane = LANES[lane_name]
+                scale = (lane["right"] - lane["left"]) / PLAYER_LOGICAL_WIDTH
+                center_x = lane["left"] + target_x * scale
+                half_width = pattern["hitbox_width"] * scale * 0.5
+                draw_filled_rectangle(
+                    center_x - half_width,
+                    lane["bottom"],
+                    center_x + half_width,
+                    lane["top"],
+                )
+                set_draw_color("accent_light")
+                draw_rectangle(
+                    center_x - half_width,
+                    lane["bottom"],
+                    center_x + half_width,
+                    lane["top"],
+                )
+                set_draw_color("accent", fill_alpha)
+            return
 
-        platform_scale = (
-            target_lane["right"] - target_lane["left"]
-        ) / PLAYER_LOGICAL_WIDTH
-        screen_x = target_lane["left"] + target_x * (
-            target_lane["right"] - target_lane["left"]
-        ) / PLAYER_LOGICAL_WIDTH
-        radius = max(8, int((pattern["hitbox_width"] or 80) * 0.5 * platform_scale))
+        targets = [(self.boss.target_lane, self.boss.target_x)]
+        if pattern["marker"] == "two_spots":
+            targets.append(("platform_1", self.boss.secondary_target_x))
+
+        for target_lane_name, target_x in targets:
+            target_lane = LANES[target_lane_name]
+            scale = (target_lane["right"] - target_lane["left"]) / PLAYER_LOGICAL_WIDTH
+            screen_x = target_lane["left"] + target_x * scale
+            growth = 1.0 - 0.5 * progress
+            set_draw_color("accent", marker_alpha)
+            draw_filled_ellipse(
+                screen_x,
+                target_lane["center_y"] + 4,
+                80 * growth * scale,
+                18 * growth * target_lane["scale"],
+            )
+            set_draw_color("accent_light")
+            draw_rectangle(
+                screen_x - 2,
+                target_lane["center_y"] - 3,
+                screen_x + 2,
+                target_lane["center_y"] + 3,
+            )
+
+    def draw_homing_projectile(self):
+        if self.boss.current_pattern != "homing" or self.boss.state != "active":
+            return
+
+        lane = LANES[self.boss.target_lane]
+        lane_scale = (lane["right"] - lane["left"]) / PLAYER_LOGICAL_WIDTH
+        target_x = lane["left"] + self.boss.target_x * lane_scale
+        progress = min(
+            self.boss.attack_elapsed / PATTERNS["homing"]["duration"],
+            1.0,
+        )
+        projectile_x = 640 + (target_x - 640) * progress
+        projectile_y = 500 + (lane["center_y"] - 500) * progress
+
+        set_draw_color("accent", 100)
+        draw_filled_ellipse(
+            target_x,
+            lane["center_y"] + 4,
+            80 - 40 * progress,
+            16 - 8 * progress,
+        )
         set_draw_color("accent_light")
-        draw_filled_circle(screen_x, target_lane["center_y"], radius)
-
-        if pattern["kind"] == "piercing":
-            rear_lane = LANES["platform_2"]
-            rear_x = rear_lane["left"] + target_x * (
-                rear_lane["right"] - rear_lane["left"]
-            ) / PLAYER_LOGICAL_WIDTH
-            draw_filled_circle(rear_x, rear_lane["center_y"], radius)
+        draw_filled_circle(projectile_x, projectile_y, 8 + 12 * progress)
 
     def draw_player_health(self):
         for health_index in range(PLAYER_MAX_HEALTH):

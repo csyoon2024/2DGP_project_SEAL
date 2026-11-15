@@ -24,6 +24,14 @@ class GameFramework:
         if hasattr(pico2d, "hide_lattice"):
             pico2d.hide_lattice()
 
+        canvas_state = pico2d.open_canvas.__globals__
+        renderer = canvas_state.get("renderer")
+        if renderer is not None:
+            pico2d.SDL_SetRenderDrawBlendMode(
+                renderer,
+                pico2d.SDL_BLENDMODE_BLEND,
+            )
+
         self._configure_fullscreen()
 
     def _configure_fullscreen(self):
