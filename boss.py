@@ -120,8 +120,12 @@ class BossController:
         self.telegraph_elapsed = 0.0
         self.secondary_target_x = None
         self.forward_progress = 0.0
+        # 보스는 대좌에 결박돼 옆으로 움직이지 않는다. 판정·매몰선 x는 항상 중앙
         self.position_x = BOSS_HOME_X
-        self.charge_target_x = BOSS_HOME_X
+        # 돌진 조준 오프셋(논리 x). 예고 시작 시 플레이어 쪽으로 정하고, 상체만 그쪽으로 기운다
+        self.charge_lean_x = 0.0
+        # 기울기 진행도 0~1: 예고 동안 0 → 1, 돌진·후경직 동안 1, 다음 공백 동안 1 → 0
+        self.lean_progress = 0.0
 
     def begin_awakening_demo(self):
         self.awakened = True
@@ -151,9 +155,11 @@ class BossController:
                     0.0,
                     self.forward_progress - fixed_delta / self.PATTERN_GAP,
                 )
-                self.position_x = self.charge_target_x + (
-                    BOSS_HOME_X - self.charge_target_x
-                ) * (1.0 - self.forward_progress)
+                # 후경직이 끝나면 공백 시간 동안 상체를 다시 세운다
+                self.lean_progress = max(
+                    0.0,
+                    self.lean_progress - fixed_delta / self.PATTERN_GAP,
+                )
             if self.timer <= 1e-9:
                 self._begin_pattern(phase, player_lane, player_x, rng, forced_pattern)
             return attacks
@@ -161,6 +167,12 @@ class BossController:
         if self.state == "telegraph":
             self.timer -= fixed_delta
             self.telegraph_elapsed += fixed_delta
+            if self.current_pattern == "charge":
+                # 예고 동안 플레이어 쪽으로 서서히 기운다
+                self.lean_progress = min(
+                    self.telegraph_elapsed / PATTERNS["charge"]["telegraph"],
+                    1.0,
+                )
             if self.timer <= 1e-9:
                 self.state = "active"
                 self.timer = PATTERNS[self.current_pattern]["duration"]
@@ -178,9 +190,7 @@ class BossController:
             elif self.current_pattern == "charge":
                 duration = PATTERNS["charge"]["duration"]
                 self.forward_progress = min(self.attack_elapsed / duration, 1.0)
-                self.position_x = BOSS_HOME_X + (
-                    self.charge_target_x - BOSS_HOME_X
-                ) * self.forward_progress
+                self.lean_progress = 1.0
             attacks.extend(self._collect_attacks(self.attack_elapsed))
             if self.timer <= 1e-9:
                 self.state = "recovery"
@@ -224,8 +234,10 @@ class BossController:
             self.target_x = player_x
             self.target_lane = "platform_1"
         elif pattern == "charge":
-            self.target_x = player_x
-            self.charge_target_x = player_x
+            # 조준은 예고 시작에 고정. 판정 x는 기울기 오프셋 기준으로 계산한다
+            self.charge_lean_x = player_x - BOSS_HOME_X
+            self.lean_progress = 0.0
+            self.target_x = BOSS_HOME_X + self.charge_lean_x
             self.target_lane = None
         elif pattern == "shockwave":
             self.target_lane = player_lane
@@ -242,6 +254,12 @@ class BossController:
         self.state = "telegraph"
         self.timer = PATTERNS[pattern]["telegraph"]
         self.telegraph_elapsed = 0.0
+
+    @property
+    def current_lean_x(self):
+        """지금 상체가 기운 양(논리 x). 그리기 전용. 양 끝에서 부드럽게 감속한다."""
+        t = self.lean_progress
+        return self.charge_lean_x * t * t * (3.0 - 2.0 * t)
 
     def telegraph_is_visible(self):
         if self.state != "telegraph" or self.current_pattern is None:

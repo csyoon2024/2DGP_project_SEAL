@@ -95,10 +95,9 @@ BOSS_CHARGE_DEPTH = 0.57
 # (앞 깊이, 뒤 깊이, 반폭, 윗면 높이, 옆면 경사폭)
 # 높이 90 → 60: 카메라를 낮춘 만큼 단상도 낮춰 보스를 화면 중앙에 둔다.
 # 맨 윗단: 뒤 깊이 = BOSS_DEPTH(보스가 뒤 가장자리에서 솟아남), 앞 깊이 = BOSS_CHARGE_DEPTH.
-# 반폭 전부 760(= 옆벽): 돌진은 보스 x를 플레이어 x(논리 25~875, 월드 ±557)로 옮기고,
-#   공격 판정도 그 x를 쓰므로 보스는 그 자리에 그려져야 한다. 맨 윗단이 그 범위 +
-#   돌진·각성 흙더미 반폭(≈183)까지 덮어야 보스가 윗단을 벗어나지 않는다: 557 + 183 = 740 < 750.
-#   그래서 위로 좁아지는 피라미드 대신 벽에서 벽까지 이어지는 계단형 대(臺)가 된다
+# 반폭 전부 760(= 옆벽): 예전 돌진은 보스 전체를 플레이어 x로 옮겨서 윗단이 그 범위를
+#   덮어야 했다. 지금은 보스가 중앙에 결박되고 상체만 기울므로(charge_lean_x) 이 폭이
+#   꼭 필요하지는 않다. 좁은 대좌로 되돌려도 보스는 벗어나지 않는다 (흙더미 반폭 ≈ 183 이상)
 PEDESTAL_TIERS = (
     (0.640, 0.530, 760, 20, 10),
     (0.605, 0.540, 760, 40, 10),
@@ -209,6 +208,9 @@ def boss_burial_elevation(world_x, depth, forward_progress, footprint_half=0.0):
             elevation = min(elevation, surface)
     return elevation
 
+
+# 돌진 조준 기울기를 화면에 그릴 비율 (조준 오프셋의 절반만큼 상체가 기운다)
+BOSS_LEAN_DRAW_RATIO = 0.5
 
 # 매몰선 흙더미의 반폭 (보스 배율 단위). draw_boss_placeholder와 boss_anchor가 같이 쓴다
 BOSS_MOUND_HALF_WIDTH = 66
@@ -811,11 +813,15 @@ def draw_boss_placeholder(
     forward_progress=0.0,
     center_x=640,
     burial_y=330,
+    lean_offset=0.0,
 ):
     """보스 1 — 땅에 반쯤 묻힌 거상 상반신.
 
     burial_y(매몰선)는 몸통이 땅에서 나오는 높이다. 그 아래(다리·발치 그림자,
     바닥에 박힌 손)는 클립해서 그리지 않는다.
+    lean_offset(화면 px)은 돌진 조준으로 상체가 기운 양이다. 매몰선에서 0, 머리에서
+    lean_offset이 되도록 높이에 비례해 밀어(전단) 몸통이 매몰선에서 꺾여 보이게 한다.
+    매몰선·흙더미는 center_x에 고정된다.
     """
     # 몸통 밑변(발치 + 34)이 매몰선에 오도록 발치를 매몰선 아래에 둔다.
     # 보이는 높이는 몸통 밑변 ~ 뿔 끝 = 214 - 34 = 180 단위
@@ -839,38 +845,66 @@ def draw_boss_placeholder(
         # 같아 묻혔다. 플레이어와 같은 #0A0C10 실루엣으로 떨어뜨리고 대비는 역광이 만든다
         set_draw_color(color_name)
 
+    def lean(x, y):
+        """높이에 비례한 가로 밀림 — 매몰선 0, 머리 중심 lean_offset."""
+        return x + lean_offset * max(0.0, y - burial_y) / max(1.0, head_y - burial_y)
+
+    def torso_quad(left, bottom, right, top):
+        return (
+            (lean(left, bottom), bottom),
+            (lean(right, bottom), bottom),
+            (lean(right, top), top),
+            (lean(left, top), top),
+        )
+
+    head_x = lean(center_x, head_y)
+
     body_color = "flash" if hit else ("wall_light" if defeated else "actor_dark")
     set_boss_color("actor_dark")
-    draw_filled_rectangle(
-        center_x - body_half_width - 8 * scale,
-        body_bottom - 8 * scale,
-        center_x + body_half_width + 8 * scale,
-        body_top + 8 * scale,
+    draw_polygon(
+        torso_quad(
+            center_x - body_half_width - 8 * scale,
+            body_bottom - 8 * scale,
+            center_x + body_half_width + 8 * scale,
+            body_top + 8 * scale,
+        )
     )
-    draw_filled_circle(center_x, head_y, 34 * scale)
+    draw_filled_circle(head_x, head_y, 34 * scale)
 
     set_boss_color(body_color)
-    draw_filled_rectangle(
-        center_x - body_half_width,
-        body_bottom,
-        center_x + body_half_width,
-        body_top,
+    draw_polygon(
+        torso_quad(
+            center_x - body_half_width,
+            body_bottom,
+            center_x + body_half_width,
+            body_top,
+        )
     )
-    draw_filled_circle(center_x, head_y, 27 * scale)
+    draw_filled_circle(head_x, head_y, 27 * scale)
 
     set_boss_color("actor_dark")
     horn_start_y = min(head_y + 18 * scale, BOSS_CEILING_Y)
     horn_end_y = min(head_y + 48 * scale, BOSS_CEILING_Y)
     # 뿔·팔은 1px 선이면 실루엣에서 사라진다. 굵기를 줘 윤곽선의 일부로 만든다
-    draw_thick_line(center_x - 26 * scale, horn_start_y - 6 * scale, center_x - 48 * scale, horn_end_y, 7 * scale, 2 * scale)
-    draw_thick_line(center_x + 26 * scale, horn_start_y - 6 * scale, center_x + 48 * scale, horn_end_y, 7 * scale, 2 * scale)
+    # 뿔은 머리에 붙어 있으므로 머리와 같은 양만큼 민다
+    for side in (-1, 1):
+        draw_thick_line(
+            head_x + side * 26 * scale,
+            horn_start_y - 6 * scale,
+            head_x + side * 48 * scale,
+            horn_end_y,
+            7 * scale,
+            2 * scale,
+        )
 
     shoulder_y = body_top - 12 * scale
 
     def draw_arm(side, elbow_x, elbow_y, hand_x, hand_y):
-        shoulder_x = center_x + side * body_half_width
-        elbow_screen_x = center_x + side * elbow_x * scale
-        hand_screen_x = center_x + side * hand_x * scale
+        # 팔은 어깨 높이만큼 밀린 몸통에 붙어 함께 움직인다
+        arm_shift = lean(center_x, shoulder_y) - center_x
+        shoulder_x = center_x + side * body_half_width + arm_shift
+        elbow_screen_x = center_x + side * elbow_x * scale + arm_shift
+        hand_screen_x = center_x + side * hand_x * scale + arm_shift
         draw_thick_line(shoulder_x, shoulder_y, elbow_screen_x, elbow_y, 16 * scale, 13 * scale)
         draw_filled_circle(elbow_screen_x, elbow_y, 6.5 * scale)
         draw_thick_line(elbow_screen_x, elbow_y, hand_screen_x, hand_y, 13 * scale, 11 * scale)
@@ -903,13 +937,18 @@ def draw_boss_placeholder(
         draw_arm(1, 56, foot_y + 108 * scale, 78, foot_y + 82 * scale)
 
     set_boss_color("accent")
-    draw_line(center_x - 22 * scale, body_top - 36 * scale, center_x + 22 * scale, body_top - 36 * scale)
-    draw_line(center_x - 24 * scale, body_top - 46 * scale, center_x + 24 * scale, body_top - 46 * scale)
+    for line_y, half in ((body_top - 36 * scale, 22), (body_top - 46 * scale, 24)):
+        draw_line(
+            lean(center_x - half * scale, line_y),
+            line_y,
+            lean(center_x + half * scale, line_y),
+            line_y,
+        )
     # 눈 — 빨강 발광 #E01C2C (BOSS1_SPEC 보스 강조색). 실루엣 안에서 유일하게 빛나는 점.
     # 각성 시 더 밝고 커지던 변화는 뺐다 — 상태와 무관하게 같다
     eye_rgb, eye_radius, glow_radius, glow_alpha = (224, 28, 44), 4.0, 12, 110
     for eye_side in (-1, 1):
-        eye_x = center_x + eye_side * 10 * scale
+        eye_x = head_x + eye_side * 10 * scale
         # 주변 약한 발광 — 가장자리로 갈수록 투명
         draw_radial_glow(eye_x, head_y, glow_radius * scale, glow_radius * 0.75 * scale, eye_rgb, glow_alpha, 20)
         set_draw_rgb(*eye_rgb)
@@ -1401,10 +1440,15 @@ class ArenaScene:
                 elif self.boss.current_pattern == "shockwave":
                     boss_pose = "shockwave_impact"
 
-        boss_screen_x, boss_foot_y, _ = boss_anchor(
+        boss_screen_x, boss_foot_y, boss_depth = boss_anchor(
             self.boss.position_x,
             self.boss.forward_progress,
             self.boss.awakened,
+        )
+        # 돌진 조준 오프셋(논리 x)을 보스 깊이의 화면 px로 바꾸고 절반만 쓴다.
+        # 조준 그대로 기울이면 머리가 레인 끝(±300px 이상)까지 넘어가 몸이 부러져 보인다
+        boss_lean_px = (
+            self.boss.current_lean_x * logical_pixels(boss_depth) * BOSS_LEAN_DRAW_RATIO
         )
         draw_boss_placeholder(
             self.boss.awakened,
@@ -1414,6 +1458,7 @@ class ArenaScene:
             self.boss.forward_progress,
             boss_screen_x,
             boss_foot_y,
+            boss_lean_px,
         )
 
         draw_lane("platform_1", "front_lane", "front_edge", 8)
