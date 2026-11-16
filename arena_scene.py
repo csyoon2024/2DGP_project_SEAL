@@ -1068,7 +1068,7 @@ def draw_player_placeholder(screen_x, foot_y, scale):
 
 class ArenaScene:
     def __init__(self):
-        self.player_lane = "platform_1"
+        self.player_lane = "platform_2"
         self.player_logical_x = 310
         self.pressed_keys = set()
         self.lane_switch_cooldown = 0.0
@@ -1159,9 +1159,9 @@ class ArenaScene:
                 )
             elif event.key == pico2d.SDLK_h and self.debug_panel_visible:
                 self.receive_player_hit()
-            elif event.key == pico2d.SDLK_SPACE:
-                self.start_dodge()
             elif event.key in (pico2d.SDLK_LSHIFT, pico2d.SDLK_RSHIFT):
+                self.start_dodge()
+            elif event.key == pico2d.SDLK_SPACE:
                 target_lane = (
                     "platform_2"
                     if self.player_lane == "platform_1"
@@ -1188,7 +1188,7 @@ class ArenaScene:
         self.lane_switch_cooldown = LANE_SWITCH_COOLDOWN
 
     def reset_player(self):
-        self.player_lane = "platform_1"
+        self.player_lane = "platform_2"
         self.player_logical_x = 310
         self.pressed_keys.clear()
         self.lane_switch_cooldown = 0.0
@@ -1440,7 +1440,7 @@ class ArenaScene:
     def restart_current_phase(self):
         phase = self.boss_phase
         self.player_health = PLAYER_MAX_HEALTH
-        self.player_lane = "platform_1"
+        self.player_lane = "platform_2"
         self.player_logical_x = 310
         self.pressed_keys.clear()
         self.dodge_direction = 0
