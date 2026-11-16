@@ -56,8 +56,20 @@ BASIC_ATTACK_REACH = 120
 HEAVY_ATTACK_DURATION = 0.70
 PLAYER_MAX_HEALTH = 3
 DEBUG_GAUGE_STEP = 0.05
-BOSS_DISPLAY_SCALE = 1.5
-# 보스 실루엣(뿔·치켜든 손 포함)의 상한. 게이지 바 아랫변 650보다 충분히 아래 (조건: < 620)
+# 평시 보스가 화면에서 차지하는 높이(매몰선 ~ 뿔 끝, 줌 1.0 기준). 화면 720의 약 47%.
+#   예전 배율 1.5 고정(≈200px, 28%)은 앞줄에서 보기에 보스가 멀고 작아 근접 공격이 닿는
+#   것이 납득되지 않았다. 매몰선(≈183)부터 위로 340px → 머리 끝 ≈ 523
+BOSS_SCREEN_HEIGHT = 340
+# 각성 시 크기 배율 1.4 → 1.1: 화면 절반 크기에서는 1.4배로 키울 자리가 없다 (천장에 막힘).
+#   각성은 전진(BOSS_AWAKENED_DEPTH)과 붉은 역광으로 보여 주고 크기는 살짝만 키운다
+BOSS_AWAKENED_SIZE_SCALE = 1.1
+# 평시 ↔ 각성 연출 전환 시간. 즉시 바꾸면 보스가 한 프레임에 튀어 나와 순간이동처럼 보인다
+BOSS_AWAKEN_BLEND_TIME = 0.5
+# 플레이어 림 라이트 (draw_player_placeholder 참고). 보스 몸통 앞에서도 윤곽이 보이게
+PLAYER_RIM_PX = 2
+PLAYER_RIM_RGBA = (150, 180, 225, 200)
+# 보스 실루엣(뿔·치켜든 손 포함)의 상한. 게이지 바 아랫변 650보다 충분히 아래 (조건: < 630).
+#   돌진(최대 1.35배)·각성 중 커지는 몫은 여기서 잘린다
 BOSS_CEILING_Y = 615
 
 # ---------------------------------------------------------------------------
@@ -83,32 +95,35 @@ ROOM_HALF_WIDTH = 760
 ROOM_NEAR_DEPTH = 1.6
 BACK_WALL_DEPTH = 0.40
 CEILING_HEIGHT = 1100
-# 0.50 → 0.55: 보스를 카메라 쪽으로 당겨 매몰선을 y≈330으로 내린다.
-#   매몰선 = 583 - (520 - 60) * 0.55 ≈ 330 → 보스가 y 330~615, 화면 세로 중앙에 든다
-BOSS_DEPTH = 0.55
-# 0.60 → 0.57 (= 맨 윗단 앞 모서리): 보스는 단상 맨 윗단을 절대 벗어나지 않는다.
-#   돌진은 윗단 앞 끝까지만 몸을 내민다 (매몰선 330 → 321). 앞으로 나오는 느낌은
-#   돌진 배율(최대 1.35배)이 만든다. 예전 0.64는 아랫단까지 내려와 단상을 벗어났다
-BOSS_CHARGE_DEPTH = 0.57
+# 0.55 → 0.63: 보스를 앞줄 바로 뒤까지 당긴다 (앞줄 먼 모서리 0.674보다 약간 뒤).
+#   매몰선 = 583 - (520 + 115) * 0.63 ≈ 183 → 앞줄 먼 모서리(≈162) 바로 위.
+#   앞줄에 선 플레이어(머리 ≈ 200)와 보스 몸통이 화면에서 겹쳐 근접 공격이 납득된다
+BOSS_DEPTH = 0.63
+# 각성 시 한 단계 더 앞으로 (매몰선 183 → 170). 앞줄 먼 모서리(0.674)를 넘지 않는다
+BOSS_AWAKENED_DEPTH = 0.65
+# 0.57 → 0.66 (= 맨 윗단 앞 모서리 0.662 안쪽): 예전 값은 새 BOSS_DEPTH보다 작아 돌진하면
+#   오히려 뒤로 물러났다. 보스는 단상 맨 윗단을 벗어나지 않으므로 윗단 앞 끝에서 멈추고,
+#   앞으로 덮쳐 오는 느낌은 돌진 배율(최대 1.35배)과 상체 기울기가 만든다
+BOSS_CHARGE_DEPTH = 0.66
 
 # 보스 단상 — 3단 계단. 카메라 쪽(아래)에서 보스 쪽(위)으로 올라간다.
 # (앞 깊이, 뒤 깊이, 반폭, 윗면 높이, 옆면 경사폭)
-# 높이 90 → 60: 카메라를 낮춘 만큼 단상도 낮춰 보스를 화면 중앙에 둔다.
-# 맨 윗단: 뒤 깊이 = BOSS_DEPTH(보스가 뒤 가장자리에서 솟아남), 앞 깊이 = BOSS_CHARGE_DEPTH.
-# 반폭 전부 760(= 옆벽): 예전 돌진은 보스 전체를 플레이어 x로 옮겨서 윗단이 그 범위를
-#   덮어야 했다. 지금은 보스가 중앙에 결박되고 상체만 기울므로(charge_lean_x) 이 폭이
-#   꼭 필요하지는 않다. 좁은 대좌로 되돌려도 보스는 벗어나지 않는다 (흙더미 반폭 ≈ 183 이상)
+# 보스를 앞줄 바로 뒤로 당기면서 단상도 앞줄 뒤에 붙였다 (예전 깊이 0.53~0.64, 높이 20~60).
+#   윗면 높이 60 → -115: 보스 발치가 앞줄 먼 모서리 바로 위에 와야 플레이어와 겹친다.
+#   아랫단 두 개의 앞면은 앞줄 뒤에 숨는다 (앞줄 먼 모서리 깊이 0.674).
+# 맨 윗단 깊이 0.560~0.662: 평시(0.63)·각성(0.65)·돌진(0.66) 보스가 모두 이 안에 있다.
+#   뒤 깊이를 넉넉히(0.56) 둬 윗면이 보스 좌우로 띠처럼 보이게 한다 (y ≈ 164~227)
+# 반폭 전부 760(= 옆벽): 보스는 중앙에 결박되고 상체만 기운다(charge_lean_x)
 PEDESTAL_TIERS = (
-    (0.640, 0.530, 760, 20, 10),
-    (0.605, 0.540, 760, 40, 10),
-    (0.570, 0.550, 760, 60, 10),
+    (0.674, 0.540, 760, -135, 10),
+    (0.668, 0.550, 760, -125, 10),
+    (0.662, 0.560, 760, -115, 10),
 )
 PEDESTAL_TOP_ELEVATION = PEDESTAL_TIERS[-1][3]
 # 돌진 중에도 보스는 맨 윗단 높이에 묻혀 있다 (예전: 맨 아랫단 20까지 내려옴)
 BOSS_CHARGE_ELEVATION = PEDESTAL_TOP_ELEVATION
-# 0 → -140: 플랫폼을 화면 하단으로 내리면서 앞줄 먼 모서리(y≈162)와 단상 사이가 벌어졌다.
-#   맨 아랫단을 보이드 아래로 늘려 밑동(583 - 660 * 0.64 ≈ 161)이 앞줄 뒤에 숨게 한다
-PEDESTAL_BASE_ELEVATION = -140
+# -140 → -200: 단상을 -135까지 내렸으므로 밑동도 그보다 아래로 늘려 앞줄 뒤에 숨긴다
+PEDESTAL_BASE_ELEVATION = -200
 
 # 좌우 벽 기둥 — 레인과 겹치지 않는 깊이(레인 사이, 단상 옆, 뒷벽 앞)에 둔다
 # 가운데 기둥 0.62 → 0.70, 앞 기둥 0.86 → 0.90: 넓힌 단상 맨 아랫단(깊이 0.53~0.64,
@@ -269,19 +284,32 @@ BOSS_BODY_OFFSET = 34
 BOSS_VISIBLE_HEIGHT = 214 - BOSS_BODY_OFFSET
 
 
+def boss_home_depth(awakened):
+    """돌진 전 보스 깊이. awakened는 0~1 연출 진행도(bool도 된다)."""
+    return BOSS_DEPTH + (BOSS_AWAKENED_DEPTH - BOSS_DEPTH) * float(awakened)
+
+
+def boss_depth_at(forward_progress, awakened=False):
+    home = boss_home_depth(awakened)
+    return home + (BOSS_CHARGE_DEPTH - home) * forward_progress
+
+
 def boss_desired_scale(awakened, forward_progress):
-    """천장 제한 전 보스 배율. 각성 1.4배가 천장에 딱 맞도록 기본 배율을 정한다."""
-    awakening_scale = BossController.AWAKENING_SIZE_SCALE if awakened else 1.0
+    """천장 제한 전 보스 배율.
+
+    평시 BOSS_DEPTH에서 BOSS_SCREEN_HEIGHT가 되도록 정하고, 깊이에 비례해 키운다
+    (각성·돌진으로 앞으로 나오면 원근만큼 커진다). 각성은 1.1배를 더 곱한다.
+    """
+    awakening_scale = 1.0 + (BOSS_AWAKENED_SIZE_SCALE - 1.0) * float(awakened)
     lunge_scale = 1.0 + (1.05 / 0.78 - 1.0) * forward_progress
-    home_base_scale = (BOSS_CEILING_Y - BOSS_HOME_BURIAL_Y) / (
-        BOSS_VISIBLE_HEIGHT * BossController.AWAKENING_SIZE_SCALE
-    )
-    return min(BOSS_DISPLAY_SCALE, home_base_scale) * max(awakening_scale, lunge_scale)
+    base_scale = BOSS_SCREEN_HEIGHT / BOSS_VISIBLE_HEIGHT
+    depth_scale = boss_depth_at(forward_progress, awakened) / BOSS_DEPTH
+    return base_scale * depth_scale * max(awakening_scale, lunge_scale)
 
 
 def boss_anchor(position_x, forward_progress, awakened=False):
     """보스 발치(매몰선)의 화면 좌표와 깊이. 보스는 발밑 단상 윗면에 묻혀 있다."""
-    depth = BOSS_DEPTH + (BOSS_CHARGE_DEPTH - BOSS_DEPTH) * forward_progress
+    depth = boss_depth_at(forward_progress, awakened)
     world_x = logical_to_world_x(position_x)
     footprint_half = (
         BOSS_MOUND_HALF_WIDTH * boss_desired_scale(awakened, forward_progress) / depth
@@ -291,7 +319,7 @@ def boss_anchor(position_x, forward_progress, awakened=False):
     return x, y, depth
 
 
-# 평시 보스 매몰선의 화면 y (≈330). 보스 크기의 기준점
+# 평시 보스 매몰선의 화면 y (≈183)
 BOSS_HOME_BURIAL_Y = project_unzoomed(0, BOSS_DEPTH, PEDESTAL_TOP_ELEVATION)[1]
 
 
@@ -483,32 +511,49 @@ def draw_soft_panel(left, bottom, right, top, feather, rgb, alpha):
 
 
 # 보스 역광 — 실루엣을 배경에서 떼어 내는 뒷벽 발광.
-# 어두운 청회색, 약하게. 보스(#0A0C10)와 벽(≈#181C28) 사이 명도 차를 벌릴 만큼만.
-# 각성 시 붉게 바뀌던 효과는 뺐다 — 각성은 크기 변화(1.4배)로만 보여 준다
+# 평시: 어두운 청회색, 약하게. 보스(#0A0C10)와 벽(≈#181C28) 사이 명도 차를 벌릴 만큼만.
+# 각성: 붉게, 알파 55 → 140 (약 2.5배). 크기를 1.4배로 키울 자리가 없어져서
+#   게이지 바를 안 봐도 각성이 읽히도록 배경 쪽에서 색과 밝기로 구분한다
 BOSS_BACKLIGHT = ((70, 86, 120), 55)
+BOSS_AWAKENED_BACKLIGHT = ((200, 34, 44), 140)
+# 패널 반폭 150 → 330, 아래 끝 뒷벽 바닥 → 단상 윗면 근처(y 190):
+#   보스가 화면 절반 크기(어깨·팔 반폭 ≈ 170~230px, 매몰선 ≈ 183)로 커져 예전 패널을
+#   다 가렸다. 보스보다 넓고 길게 깔아야 어깨·팔·뿔 윤곽이 산다
+BOSS_BACKLIGHT_HALF_WIDTH = 330
+BOSS_BACKLIGHT_BOTTOM_Y = 190
 
 
-def draw_boss_backlight():
-    """보스보다 먼저 그리는 뒷벽 역광 패널 + 머리 뒤 발광."""
-    rgb, alpha = BOSS_BACKLIGHT
-    wall_y = VANISHING_Y - CAMERA_HEIGHT * BACK_WALL_DEPTH
-    # 뒷벽 위 넓은 패널 — 보스 몸통 폭보다 넓게, 가장자리 90px에 걸쳐 사라진다
-    panel_left, panel_bottom = zoom_point(wall_center_x() - 150, wall_y + 10)
-    panel_right, panel_top = zoom_point(wall_center_x() + 150, HEIGHT - 120)
+def draw_boss_backlight(awakened=0.0):
+    """보스보다 먼저 그리는 뒷벽 역광 패널 + 머리 뒤 발광. awakened: 0~1 전환 진행도."""
+    (calm_rgb, calm_alpha), (awake_rgb, awake_alpha) = (
+        BOSS_BACKLIGHT,
+        BOSS_AWAKENED_BACKLIGHT,
+    )
+    t = max(0.0, min(float(awakened), 1.0))
+    rgb = tuple(round(a + (b - a) * t) for a, b in zip(calm_rgb, awake_rgb))
+    alpha = round(calm_alpha + (awake_alpha - calm_alpha) * t)
+    # 보스 깊이 화면 x — 보스와 같은 양만큼 카메라를 따라가야 역광이 보스 뒤에 머문다
+    center_x = VANISHING_X - camera_x * BOSS_DEPTH
+    panel_left, panel_bottom = zoom_point(
+        center_x - BOSS_BACKLIGHT_HALF_WIDTH, BOSS_BACKLIGHT_BOTTOM_Y
+    )
+    panel_right, panel_top = zoom_point(
+        center_x + BOSS_BACKLIGHT_HALF_WIDTH, HEIGHT - 100
+    )
     draw_soft_panel(
         panel_left,
         panel_bottom,
         panel_right,
         panel_top,
-        90 * view_zoom,
+        120 * view_zoom,
         rgb,
         alpha // 2,
     )
-    # 머리·어깨 뒤에 더 진한 타원 — 윤곽선이 가장 중요한 부분을 밝힌다
+    # 머리·어깨 뒤에 더 진한 타원 — 윤곽선이 가장 중요한 부분을 밝힌다 (보스에 맞춰 키움)
     draw_radial_glow(
-        *zoom_point(wall_center_x(), wall_y + 180),
+        *zoom_point(center_x, BOSS_HOME_BURIAL_Y + 0.75 * BOSS_SCREEN_HEIGHT),
+        400 * view_zoom,
         260 * view_zoom,
-        200 * view_zoom,
         rgb,
         alpha,
     )
@@ -889,9 +934,8 @@ def draw_boss_placeholder(
     # 보이는 높이는 몸통 밑변 ~ 뿔 끝 = 214 - 34 = 180 단위
     body_offset = BOSS_BODY_OFFSET
     visible_height = BOSS_VISIBLE_HEIGHT
-    # 각성 시 매몰선을 40px 내리던 것을 없앴다: 위가 천장(615)에 막혀 아래로만 커지면서
-    # 보스가 단상에서 43px 미끄러져 내려왔다. 이제 매몰선은 고정이고 보스는 위로만 커진다.
-    # 기본 배율은 각성(1.4배)이 천장에 딱 맞도록 정한다 → 평시 ≈ 200px, 각성 ≈ 280px (PRD §2)
+    # 매몰선은 boss_anchor가 정한 단상 윗면에 고정되고 보스는 위로만 커진다.
+    # 평시 ≈ 340px(화면 47%), 각성은 앞으로 나온 원근 + 1.1배, 위는 천장(615)에서 잘린다
     # 카메라 줌: 바닥(project)과 같은 배율을 보스 크기와 천장에도 곱한다
     desired_scale = boss_desired_scale(awakened, forward_progress) * view_zoom
     ceiling_y = zoom_y(BOSS_CEILING_Y)
@@ -1041,6 +1085,18 @@ def draw_player_placeholder(screen_x, foot_y, scale):
         8 * scale,
     )
 
+    # 림 라이트 — 보스가 앞줄 바로 뒤까지 커지면서 같은 검은 실루엣(#0A0C10)인 플레이어가
+    # 보스 몸통 앞에서 묻혔다. 실루엣보다 2px 큰 차가운 빛 테두리로 윤곽을 떼어 낸다
+    rim = PLAYER_RIM_PX
+    set_draw_rgb(*PLAYER_RIM_RGBA)
+    draw_filled_circle(screen_x, foot_y + 70 * scale, 15 * scale + rim)
+    draw_filled_rectangle(
+        screen_x - body_half_width - 3 * scale - rim,
+        body_bottom - 3 * scale - rim,
+        screen_x + body_half_width + 3 * scale + rim,
+        body_top + 3 * scale + rim,
+    )
+
     set_draw_color("actor_dark")
     draw_filled_circle(screen_x, foot_y + 70 * scale, 15 * scale)
     draw_filled_rectangle(
@@ -1134,6 +1190,8 @@ class ArenaScene:
         # 좌우 카메라(월드 x). 시작 위치에서 바로 맞춰 첫 프레임에 미끄러지지 않게 한다
         self.camera_x = self.camera_target_x()
         self.apply_view_zoom()
+        # 각성 연출 진행도 0~1 (그리기 전용). 깊이·크기·역광을 이 값으로 섞는다
+        self.boss_awaken_blend = 0.0
 
     def enter(self):
         pass
@@ -1352,6 +1410,19 @@ class ArenaScene:
         self.camera_x += (self.camera_target_x() - self.camera_x) * follow
         self.apply_view_zoom()
 
+        # 각성 연출: 판정과 무관하게 화면에서만 BOSS_AWAKEN_BLEND_TIME에 걸쳐 전환한다
+        step = fixed_delta / BOSS_AWAKEN_BLEND_TIME
+        goal = 1.0 if self.boss.awakened else 0.0
+        if self.boss_awaken_blend < goal:
+            self.boss_awaken_blend = min(goal, self.boss_awaken_blend + step)
+        else:
+            self.boss_awaken_blend = max(goal, self.boss_awaken_blend - step)
+
+    def boss_awaken_visual(self):
+        """각성 연출 진행도에 ease-in-out을 건 값 (0~1)."""
+        t = self.boss_awaken_blend
+        return t * t * (3.0 - 2.0 * t)
+
     def camera_target_x(self):
         return logical_to_world_x(self.player_logical_x) * CAMERA_FOLLOW
 
@@ -1548,7 +1619,7 @@ class ArenaScene:
         draw_room(with_floor=False)
         draw_pillars(with_floor=False)
         draw_back_fog()
-        draw_boss_backlight()
+        draw_boss_backlight(self.boss_awaken_visual())
         draw_pedestal()
         boss_pose = "idle"
         if self.boss.current_pattern is not None:
@@ -1562,7 +1633,7 @@ class ArenaScene:
         boss_screen_x, boss_foot_y, boss_depth = boss_anchor(
             self.boss.position_x,
             self.boss.forward_progress,
-            self.boss.awakened,
+            self.boss_awaken_visual(),
         )
         # 돌진 조준 오프셋(논리 x)을 보스 깊이의 화면 px로 바꾸고 절반만 쓴다.
         # 조준 그대로 기울이면 머리가 레인 끝(±300px 이상)까지 넘어가 몸이 부러져 보인다
@@ -1570,7 +1641,7 @@ class ArenaScene:
             self.boss.current_lean_x * logical_pixels(boss_depth) * BOSS_LEAN_DRAW_RATIO
         )
         draw_boss_placeholder(
-            self.boss.awakened,
+            self.boss_awaken_visual(),
             self.boss_hit_timer > 0,
             self.boss_defeated,
             boss_pose,
@@ -1828,7 +1899,7 @@ class ArenaScene:
         boss_screen_x, boss_foot_y, _ = boss_anchor(
             self.boss.position_x,
             self.boss.forward_progress,
-            self.boss.awakened,
+            self.boss_awaken_visual(),
         )
         launch_y = boss_foot_y + 220 * view_zoom
         projectile_x = boss_screen_x + (target_x - boss_screen_x) * progress
