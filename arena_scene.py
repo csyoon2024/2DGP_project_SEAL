@@ -1254,6 +1254,14 @@ class ArenaScene:
         self.trigger_screen_shake(8, 0.15)
         return True
 
+    def recover_health_from_pushback(self):
+        # 체력이 가득이면 회복할 게 없으니 기준점을 현재값으로 당겨, 되민 양을 미리 쌓아두지 못하게 한다
+        if self.player_health >= PLAYER_MAX_HEALTH:
+            self.seal_gauge.reset_recovery_mark()
+            return
+        if self.seal_gauge.try_recover_health():
+            self.player_health = min(PLAYER_MAX_HEALTH, self.player_health + 1)
+
     def trigger_screen_shake(self, strength, duration):
         if strength >= self.screen_shake_strength or self.screen_shake_timer <= 0:
             self.screen_shake_strength = strength
@@ -1396,6 +1404,7 @@ class ArenaScene:
                     self.successful_hits += 1
                     self.boss_hit_timer = 0.06
                     self.seal_gauge.player_attack_hit(self.attack_type)
+                    self.recover_health_from_pushback()
                 self.attack_hit_registered = True
             if self.attack_elapsed >= attack_duration - 1e-9:
                 self.attack_type = None
@@ -1457,7 +1466,8 @@ class ArenaScene:
             )
             self.resolve_boss_attack(boss_attack)
 
-        if self.player_health <= 0 or self.seal_gauge.boss_won:
+        # 사망은 체력 0일 때만. 게이지가 보스 쪽 끝에 닿아도 각성 상태로 계속 싸운다
+        if self.player_health <= 0:
             self.restart_current_phase()
         elif self.seal_gauge.player_won:
             if self.boss_phase == 1:
