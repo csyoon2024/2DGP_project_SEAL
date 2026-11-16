@@ -1534,6 +1534,9 @@ class ArenaScene:
             shake_strength, shake_duration = PATTERNS[boss_attack.pattern]["shake"]
             if boss_attack.pattern == "slam_double":
                 shake_strength = 6 if boss_attack.hit_index == 0 else 8
+            if boss_attack.delayed:
+                # 뒷줄 시간차 타격은 퍼져 나온 여진이라 흔들림을 약하게 (60%)
+                shake_strength = round(shake_strength * 0.6)
             impact_x = boss_attack.target_x
             if impact_x is None:
                 impact_x = BOSS_LOGICAL_X
@@ -1875,6 +1878,9 @@ class ArenaScene:
         targets = [(self.boss.target_lane, self.boss.target_x)]
         if pattern["marker"] == "two_spots":
             targets.append(("platform_1", self.boss.secondary_target_x))
+        if self.boss.current_pattern in ("slam", "slam_double"):
+            # 내리찍기는 뒷줄 같은 x에도 시간차로 닿으므로 뒷줄에도 예고를 띄운다
+            targets += [("platform_2", target_x) for _, target_x in list(targets)]
 
         for target_lane_name, target_x in targets:
             target_lane = LANES[target_lane_name]

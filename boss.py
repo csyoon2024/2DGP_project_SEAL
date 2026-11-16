@@ -16,6 +16,11 @@ PHASE_PATTERNS = {
     },
 }
 BOSS_HOME_X = 450
+# 내리찍기 충격이 앞줄에 먼저 닿고 뒷줄에는 이만큼 늦게 닿는다 (초).
+#   보스에서 가까운 앞줄이 먼저 맞아야 내리찍은 충격이 앞으로 퍼져 나오는 것처럼 읽힌다.
+#   0.12: 두 번 터지는 게 눈에 보일 만큼 길고, 내리찍기 실행 시간(0.15)과
+#   연속 내리찍기 2타(0.30 + 0.12 = 0.42 < 0.45) 안에 들어갈 만큼 짧다
+SLAM_REAR_DELAY = 0.12
 
 PATTERNS = {
     "slam": {
@@ -94,6 +99,8 @@ class BossAttack:
     target_x: float | None
     hitbox_width: float | None
     hit_index: int = 0
+    # 내리찍기의 뒷줄 시간차 타격이면 True
+    delayed: bool = False
 
 
 class BossController:
@@ -119,6 +126,8 @@ class BossController:
         self.next_hit_index = 0
         self.telegraph_elapsed = 0.0
         self.secondary_target_x = None
+        # 아직 터지지 않은 뒷줄 시간차 타격: (공격 경과 시간, BossAttack)
+        self.pending_rear_hits = []
         self.forward_progress = 0.0
         # 보스는 대좌에 결박돼 옆으로 움직이지 않는다. 판정·매몰선 x는 항상 중앙
         self.position_x = BOSS_HOME_X
@@ -193,6 +202,9 @@ class BossController:
                 self.lean_progress = 1.0
             attacks.extend(self._collect_attacks(self.attack_elapsed))
             if self.timer <= 1e-9:
+                # 실행이 끝나기 전에 못 터진 뒷줄 타격이 있으면 여기서 마저 터뜨린다
+                attacks.extend(attack for _, attack in self.pending_rear_hits)
+                self.pending_rear_hits = []
                 self.state = "recovery"
                 self.timer = PATTERNS[self.current_pattern]["recovery"]
                 if self.current_pattern == "charge":
@@ -230,6 +242,7 @@ class BossController:
         self.current_pattern = pattern
         self.target_x = None
         self.secondary_target_x = None
+        self.pending_rear_hits = []
         if pattern in ("slam", "slam_double"):
             self.target_x = player_x
             self.target_lane = "platform_1"
@@ -296,5 +309,28 @@ class BossController:
                     hit_index=self.next_hit_index,
                 )
             )
+            if self.current_pattern in ("slam", "slam_double"):
+                # 같은 x의 뒷줄 타격을 SLAM_REAR_DELAY 뒤로 예약한다
+                self.pending_rear_hits.append(
+                    (
+                        hit_times[self.next_hit_index] + SLAM_REAR_DELAY,
+                        BossAttack(
+                            pattern=self.current_pattern,
+                            kind=pattern["kind"],
+                            target_lane="platform_2",
+                            target_x=target_x,
+                            hitbox_width=pattern["hitbox_width"],
+                            hit_index=self.next_hit_index,
+                            delayed=True,
+                        ),
+                    )
+                )
             self.next_hit_index += 1
+
+        due = [hit for hit in self.pending_rear_hits if elapsed + 1e-9 >= hit[0]]
+        if due:
+            self.pending_rear_hits = [
+                hit for hit in self.pending_rear_hits if hit not in due
+            ]
+            attacks.extend(attack for _, attack in due)
         return attacks
