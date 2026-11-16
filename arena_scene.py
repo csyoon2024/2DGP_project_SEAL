@@ -145,11 +145,41 @@ LANES = {
 }
 
 
-def project(world_x, depth, elevation=0.0):
+# ---------------------------------------------------------------------------
+# 레인별 카메라 줌 — 소실점(VANISHING_X, VANISHING_Y)을 중심으로 화면 전체를 확대한다.
+# 뒷줄 1.00: 기본 구도. 두 플랫폼·대좌·보스가 다 들어오는 전체 화면.
+# 앞줄 1.12: 보스 쪽으로 다가간 긴장감. 12%면 앞줄 양 끝(논리 0/900)이 화면 x 171~1109로
+#   여전히 화면 안에 있고, 보스 머리(천장 615 → 619)도 게이지 바(650) 아래에 남는다.
+#   더 키우면 앞줄 끝이 가장자리에 붙고 뒷줄이 화면 아래로 크게 잘린다.
+# 0.30초: 레인 전환(0.25초)보다 조금 길게 — 몸이 먼저 도착하고 카메라가 뒤따라온다.
+# UI(게이지·체력·디버그·상태 텍스트)는 project()를 쓰지 않으므로 줌에서 제외된다.
+# ---------------------------------------------------------------------------
+LANE_VIEW_ZOOM = {"platform_2": 1.00, "platform_1": 1.12}
+VIEW_ZOOM_DURATION = 0.30
+view_zoom = 1.0
+
+
+def zoom_point(x, y):
+    """화면 좌표 한 점에 줌을 적용한다 (소실점 중심)."""
+    return (
+        VANISHING_X + (x - VANISHING_X) * view_zoom,
+        VANISHING_Y + (y - VANISHING_Y) * view_zoom,
+    )
+
+
+def zoom_y(y):
+    return VANISHING_Y + (y - VANISHING_Y) * view_zoom
+
+
+def project_unzoomed(world_x, depth, elevation=0.0):
     return (
         VANISHING_X + world_x * depth,
         VANISHING_Y - (CAMERA_HEIGHT - elevation) * depth,
     )
+
+
+def project(world_x, depth, elevation=0.0):
+    return zoom_point(*project_unzoomed(world_x, depth, elevation))
 
 
 def logical_to_world_x(logical_x):
@@ -157,8 +187,8 @@ def logical_to_world_x(logical_x):
 
 
 def logical_pixels(depth):
-    """논리 x 1이 해당 깊이에서 화면 몇 px인지."""
-    return 2 * LANE_HALF_WIDTH / PLAYER_LOGICAL_WIDTH * depth
+    """논리 x 1이 해당 깊이에서 화면 몇 px인지 (카메라 줌 포함)."""
+    return 2 * LANE_HALF_WIDTH / PLAYER_LOGICAL_WIDTH * depth * view_zoom
 
 
 def lane_point(lane_name, logical_x, depth=None):
@@ -241,7 +271,7 @@ def boss_anchor(position_x, forward_progress, awakened=False):
 
 
 # 평시 보스 매몰선의 화면 y (≈330). 보스 크기의 기준점
-BOSS_HOME_BURIAL_Y = project(0, BOSS_DEPTH, PEDESTAL_TOP_ELEVATION)[1]
+BOSS_HOME_BURIAL_Y = project_unzoomed(0, BOSS_DEPTH, PEDESTAL_TOP_ELEVATION)[1]
 
 
 def set_draw_color(name, alpha=255, saturation=1.0, blue_tint=0.0):
@@ -442,17 +472,25 @@ def draw_boss_backlight():
     rgb, alpha = BOSS_BACKLIGHT
     wall_y = VANISHING_Y - CAMERA_HEIGHT * BACK_WALL_DEPTH
     # 뒷벽 위 넓은 패널 — 보스 몸통 폭보다 넓게, 가장자리 90px에 걸쳐 사라진다
+    panel_left, panel_bottom = zoom_point(VANISHING_X - 150, wall_y + 10)
+    panel_right, panel_top = zoom_point(VANISHING_X + 150, HEIGHT - 120)
     draw_soft_panel(
-        VANISHING_X - 150,
-        wall_y + 10,
-        VANISHING_X + 150,
-        HEIGHT - 120,
-        90,
+        panel_left,
+        panel_bottom,
+        panel_right,
+        panel_top,
+        90 * view_zoom,
         rgb,
         alpha // 2,
     )
     # 머리·어깨 뒤에 더 진한 타원 — 윤곽선이 가장 중요한 부분을 밝힌다
-    draw_radial_glow(VANISHING_X, wall_y + 180, 260, 200, rgb, alpha)
+    draw_radial_glow(
+        *zoom_point(VANISHING_X, wall_y + 180),
+        260 * view_zoom,
+        200 * view_zoom,
+        rgb,
+        alpha,
+    )
 
 
 def draw_room(with_floor=True):
@@ -466,10 +504,10 @@ def draw_room(with_floor=True):
     # 뒷벽 — 위로 갈수록 어두워지는 수직 그라데이션
     draw_polygon(
         (
-            (VANISHING_X - wall_half, wall_y),
-            (VANISHING_X + wall_half, wall_y),
-            (VANISHING_X + wall_half, HEIGHT),
-            (VANISHING_X - wall_half, HEIGHT),
+            zoom_point(VANISHING_X - wall_half, wall_y),
+            zoom_point(VANISHING_X + wall_half, wall_y),
+            zoom_point(VANISHING_X + wall_half, HEIGHT),
+            zoom_point(VANISHING_X - wall_half, HEIGHT),
         ),
         ((24, 28, 40, 255), (24, 28, 40, 255), (10, 12, 18, 255), (10, 12, 18, 255)),
     )
@@ -499,7 +537,10 @@ def draw_room(with_floor=True):
             *project(side * ROOM_HALF_WIDTH, BACK_WALL_DEPTH),
             *project(side * ROOM_HALF_WIDTH, BACK_WALL_DEPTH, CEILING_HEIGHT),
         )
-    draw_line(VANISHING_X - wall_half, wall_y, VANISHING_X + wall_half, wall_y)
+    draw_line(
+        *zoom_point(VANISHING_X - wall_half, wall_y),
+        *zoom_point(VANISHING_X + wall_half, wall_y),
+    )
 
 
 def draw_floor_tiles():
@@ -546,10 +587,10 @@ def draw_back_fog():
     # 뒷벽 — 바닥에서 위로 옅어진다
     draw_polygon(
         (
-            (VANISHING_X - wall_half, wall_y),
-            (VANISHING_X + wall_half, wall_y),
-            (VANISHING_X + wall_half, wall_y + 220),
-            (VANISHING_X - wall_half, wall_y + 220),
+            zoom_point(VANISHING_X - wall_half, wall_y),
+            zoom_point(VANISHING_X + wall_half, wall_y),
+            zoom_point(VANISHING_X + wall_half, wall_y + 220),
+            zoom_point(VANISHING_X - wall_half, wall_y + 220),
         ),
         (dense, dense, clear, clear),
     )
@@ -565,12 +606,12 @@ def draw_back_fog():
         (clear, clear, dense, dense),
     )
     # 보스 머리 뒤 은은한 후광 — 실루엣이 배경에서 떨어져 보이게
-    halo_center = (VANISHING_X, VANISHING_Y - 90)
+    halo_center = zoom_point(VANISHING_X, VANISHING_Y - 90)
     segments = 24
     ring = [
         (
-            halo_center[0] + 320 * math.cos(2 * math.pi * index / segments),
-            halo_center[1] + 230 * math.sin(2 * math.pi * index / segments),
+            halo_center[0] + 320 * view_zoom * math.cos(2 * math.pi * index / segments),
+            halo_center[1] + 230 * view_zoom * math.sin(2 * math.pi * index / segments),
         )
         for index in range(segments + 1)
     ]
@@ -800,7 +841,7 @@ def draw_lane(lane_name,fill_color, edge_color, tick_count, opacity=0.85, satura
             *lane_point(lane_name, logical_x, far_depth),
         )
 
-    marker_radius = max(3, int(5 * lane["scale"]))
+    marker_radius = max(3, int(5 * lane["scale"] * view_zoom))
     for logical_x in (18, PLAYER_LOGICAL_WIDTH - 18):
         draw_filled_circle(*lane_point(lane_name, logical_x), marker_radius)
 
@@ -830,8 +871,10 @@ def draw_boss_placeholder(
     # 각성 시 매몰선을 40px 내리던 것을 없앴다: 위가 천장(615)에 막혀 아래로만 커지면서
     # 보스가 단상에서 43px 미끄러져 내려왔다. 이제 매몰선은 고정이고 보스는 위로만 커진다.
     # 기본 배율은 각성(1.4배)이 천장에 딱 맞도록 정한다 → 평시 ≈ 200px, 각성 ≈ 280px (PRD §2)
-    desired_scale = boss_desired_scale(awakened, forward_progress)
-    max_visible_scale = (BOSS_CEILING_Y - burial_y) / visible_height
+    # 카메라 줌: 바닥(project)과 같은 배율을 보스 크기와 천장에도 곱한다
+    desired_scale = boss_desired_scale(awakened, forward_progress) * view_zoom
+    ceiling_y = zoom_y(BOSS_CEILING_Y)
+    max_visible_scale = (ceiling_y - burial_y) / visible_height
     scale = min(desired_scale, max_visible_scale)
     foot_y = burial_y - body_offset * scale
     set_clip_above(burial_y)
@@ -883,8 +926,8 @@ def draw_boss_placeholder(
     draw_filled_circle(head_x, head_y, 27 * scale)
 
     set_boss_color("actor_dark")
-    horn_start_y = min(head_y + 18 * scale, BOSS_CEILING_Y)
-    horn_end_y = min(head_y + 48 * scale, BOSS_CEILING_Y)
+    horn_start_y = min(head_y + 18 * scale, ceiling_y)
+    horn_end_y = min(head_y + 48 * scale, ceiling_y)
     # 뿔·팔은 1px 선이면 실루엣에서 사라진다. 굵기를 줘 윤곽선의 일부로 만든다
     # 뿔은 머리에 붙어 있으므로 머리와 같은 양만큼 민다
     for side in (-1, 1):
@@ -911,11 +954,13 @@ def draw_boss_placeholder(
         draw_filled_circle(hand_screen_x, hand_y, 11 * scale)
 
     if pose == "slam":
-        hand_limit = BOSS_CEILING_Y - 9 * scale
+        # 손 원 반지름(11)만큼 천장에서 내린다. 9로 두면 손이 천장 위로 2×scale 삐져나온다
+        hand_limit = ceiling_y - 11 * scale
         draw_arm(-1, 58, min(foot_y + 177 * scale, hand_limit - 9 * scale), 64, min(foot_y + 220 * scale, hand_limit))
         draw_arm(1, 58, foot_y + 105 * scale, 75, foot_y + 78 * scale)
     elif pose == "slam_double":
-        hand_limit = BOSS_CEILING_Y - 9 * scale
+        # 손 원 반지름(11)만큼 천장에서 내린다. 9로 두면 손이 천장 위로 2×scale 삐져나온다
+        hand_limit = ceiling_y - 11 * scale
         raised_elbow_y = min(foot_y + 177 * scale, hand_limit - 9 * scale)
         raised_hand_y = min(foot_y + 220 * scale, hand_limit)
         draw_arm(-1, 58, raised_elbow_y, 64, raised_hand_y)
@@ -1060,6 +1105,12 @@ class ArenaScene:
         self.debug_pattern_seed = 1
         self.debug_pattern_rng = random.Random()
         self.debug_font = None
+        # 카메라 줌(그리기 전용). 시작 레인의 줌에서 출발한다
+        self.view_zoom = LANE_VIEW_ZOOM[self.player_lane]
+        self.view_zoom_from = self.view_zoom
+        self.view_zoom_to = self.view_zoom
+        self.view_zoom_elapsed = VIEW_ZOOM_DURATION
+        self.apply_view_zoom()
 
     def enter(self):
         pass
@@ -1246,7 +1297,32 @@ class ArenaScene:
         boss_right = self.boss.position_x + BOSS_HITBOX_HALF_WIDTH
         return attack_left <= boss_right and attack_right >= boss_left
 
+    def update_camera(self, fixed_delta):
+        """레인별 카메라 줌 보간. 게임플레이에는 영향이 없다 (그리기 전용 상태)."""
+        # 전환 중이면 도착할 레인, 아니면 지금 레인의 줌을 목표로 한다
+        target_lane = self.lane_transition_target or self.player_lane
+        target_zoom = LANE_VIEW_ZOOM[target_lane]
+        if target_zoom != self.view_zoom_to:
+            self.view_zoom_from = self.view_zoom
+            self.view_zoom_to = target_zoom
+            self.view_zoom_elapsed = 0.0
+        self.view_zoom_elapsed = min(
+            self.view_zoom_elapsed + fixed_delta,
+            VIEW_ZOOM_DURATION,
+        )
+        t = self.view_zoom_elapsed / VIEW_ZOOM_DURATION
+        eased = 1.0 - (1.0 - t) ** 3  # ease-out: 빠르게 출발해 부드럽게 멈춘다
+        self.view_zoom = self.view_zoom_from + (
+            self.view_zoom_to - self.view_zoom_from
+        ) * eased
+        self.apply_view_zoom()
+
+    def apply_view_zoom(self):
+        global view_zoom
+        view_zoom = self.view_zoom
+
     def update(self, fixed_delta):
+        self.update_camera(fixed_delta)
         if self.boss_defeated:
             return
 
@@ -1411,6 +1487,7 @@ class ArenaScene:
 
     def draw(self):
         global DRAW_OFFSET_X, DRAW_OFFSET_Y
+        self.apply_view_zoom()
         if self.screen_shake_timer > 0 and self.screen_shake_duration > 0:
             shake_scale = self.screen_shake_timer / self.screen_shake_duration
             shake_sign = -1 if self.screen_shake_frame % 2 else 1
@@ -1492,6 +1569,8 @@ class ArenaScene:
             player_elevation,
         )
         platform_scale = logical_pixels(player_scale)
+        # 깊이 배율(player_scale)은 투영에만 쓰고, 그리는 크기에는 카메라 줌을 곱한다
+        player_scale *= view_zoom
         draw_player_placeholder(screen_x, player_y, player_scale)
         self.draw_player_health()
 
@@ -1685,7 +1764,7 @@ class ArenaScene:
                 screen_x,
                 screen_y,
                 80 * growth * scale,
-                18 * growth * target_lane["scale"],
+                18 * growth * target_lane["scale"] * view_zoom,
             )
             set_draw_color("accent_light", 255 if visible else 45)
             draw_rectangle(
@@ -1709,7 +1788,7 @@ class ArenaScene:
             self.boss.forward_progress,
             self.boss.awakened,
         )
-        launch_y = boss_foot_y + 220
+        launch_y = boss_foot_y + 220 * view_zoom
         projectile_x = boss_screen_x + (target_x - boss_screen_x) * progress
         projectile_y = launch_y + (target_y - launch_y) * progress
 
@@ -1717,11 +1796,11 @@ class ArenaScene:
         draw_filled_ellipse(
             target_x,
             target_y,
-            80 - 40 * progress,
-            16 - 8 * progress,
+            (80 - 40 * progress) * view_zoom,
+            (16 - 8 * progress) * view_zoom,
         )
         set_draw_color("accent_light")
-        draw_filled_circle(projectile_x, projectile_y, 8 + 12 * progress)
+        draw_filled_circle(projectile_x, projectile_y, (8 + 12 * progress) * view_zoom)
 
     def draw_active_boss_effects(self):
         if self.boss.state != "active" or self.boss.current_pattern is None:
@@ -1834,7 +1913,7 @@ class ArenaScene:
                 target_x,
                 target_y,
                 80 * (1.0 - 0.5 * marker_progress) * scale,
-                18 * (1.0 - 0.5 * marker_progress) * lane["scale"],
+                18 * (1.0 - 0.5 * marker_progress) * lane["scale"] * view_zoom,
             )
 
     def draw_impact_flash(self):
@@ -1845,13 +1924,13 @@ class ArenaScene:
         spread = 1.0 - remaining
         # 바닥에 납작하게 퍼지는 착탄 고리 + 위로 솟는 짧은 섬광
         set_draw_color("flash", int(200 * remaining))
-        draw_filled_ellipse(x, y, 40 + 50 * spread, 10 + 12 * spread)
+        draw_filled_ellipse(x, y, (40 + 50 * spread) * view_zoom, (10 + 12 * spread) * view_zoom)
         draw_polygon(
             (
-                (x - 14, y),
-                (x + 14, y),
-                (x + 4, y + 60 + 40 * spread),
-                (x - 4, y + 60 + 40 * spread),
+                (x - 14 * view_zoom, y),
+                (x + 14 * view_zoom, y),
+                (x + 4 * view_zoom, y + (60 + 40 * spread) * view_zoom),
+                (x - 4 * view_zoom, y + (60 + 40 * spread) * view_zoom),
             ),
             (
                 (255, 244, 224, int(220 * remaining)),
