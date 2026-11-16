@@ -1,3 +1,6 @@
+from boss import PHASE_MODIFIERS
+
+
 class SealGauge:
     INITIAL_VALUE = 0.5
     LEAK_PER_SECOND = 0.015
@@ -6,9 +9,10 @@ class SealGauge:
     # 테스트용: 공격으로 미는 양 배율. 3.0 = 300% (기본 0.04 → 0.12, 강공격 0.12 → 0.36).
     #   페이즈 전환·회복을 빨리 확인하려고 임시로 올렸다. 밸런스 확인 전에 1.0으로 되돌릴 것
     ATTACK_GAIN_TEST_MULTIPLIER = 3.0
+    # 1페이즈 기준값. 실제 피격 손실·각성 진입선은 PHASE_MODIFIERS에서 페이즈별로 가져온다
     BOSS_HIT_LOSS = 0.15
     AWAKENED_HIT_LOSS = 0.20
-    AWAKEN_THRESHOLD = 0.85
+    # 해제선은 페이즈와 무관하게 고정. 진입선과 벌어져 있어야 경계에서 깜빡이지 않는다
     AWAKEN_CLEAR_THRESHOLD = 0.60
     # 최저점(보스 쪽으로 가장 많이 밀린 값)에서 이만큼 되밀면 체력 1칸 회복.
     # 절대 위치가 아니라 "되민 양" 기준이라 깊은 열세에서도 회복이 잠기지 않는다.
@@ -18,6 +22,7 @@ class SealGauge:
 
     def __init__(self):
         self.value = self.INITIAL_VALUE
+        self.phase = 1
         self.boss_awakened = False
         # 회복 기준점: 마지막 회복(또는 체력이 가득했던 때) 이후 가장 보스 쪽으로 밀린 값
         self.recovery_mark = self.value
@@ -81,5 +86,20 @@ class SealGauge:
         if self.boss_awakened:
             if self.value <= self.AWAKEN_CLEAR_THRESHOLD:
                 self.boss_awakened = False
-        elif self.value >= self.AWAKEN_THRESHOLD:
+        elif self.value >= self.awaken_threshold:
             self.boss_awakened = True
+
+    @property
+    def awaken_threshold(self):
+        return PHASE_MODIFIERS[self.phase]["awaken_threshold"]
+
+    def set_phase(self, phase):
+        self.phase = phase
+        self._update_awakened_state()
+
+    def hit_loss(self, awakened):
+        """현재 페이즈의 피격 손실. 각성 중 손실은 기본 손실과 같은 비율로 올린다."""
+        base = PHASE_MODIFIERS[self.phase]["hit_loss"]
+        if awakened:
+            return self.AWAKENED_HIT_LOSS * (base / self.BOSS_HIT_LOSS)
+        return base

@@ -12,7 +12,7 @@ from pico2d import (
     draw_line as pico_draw_line,
     draw_rectangle as pico_draw_rectangle,
 )
-from boss import BossAttack, BossController, PATTERNS, PHASE_PATTERNS
+from boss import BossAttack, BossController, PATTERNS, PHASE_PATTERNS, PHASE_MODIFIERS
 
 
 WIDTH = 1280
@@ -1320,11 +1320,8 @@ class ArenaScene:
         if self.player_health <= 0:
             return False
         self.player_health -= 1
-        hit_loss = (
-            SealGauge.AWAKENED_HIT_LOSS
-            if self.boss.awakened
-            else SealGauge.BOSS_HIT_LOSS
-        )
+        # 피격 손실은 현재 페이즈 값 (PHASE_MODIFIERS["hit_loss"], 각성 중엔 같은 비율로 증가)
+        hit_loss = self.seal_gauge.hit_loss(self.boss.awakened)
         self.seal_gauge.player_hit(hit_loss)
         self.trigger_impact_flash(
             *lane_point(self.player_lane, self.player_logical_x)
@@ -1533,6 +1530,7 @@ class ArenaScene:
         phase_jump = self.consume_debug_phase_jump()
         if phase_jump is not None:
             self.boss_phase = phase_jump
+            self.seal_gauge.set_phase(phase_jump)
             self.debug_phase = phase_jump
             self.boss.reset_for_phase(phase_jump)
             self.boss.set_awakened(self.boss_should_awaken())
@@ -1570,6 +1568,7 @@ class ArenaScene:
         elif self.seal_gauge.player_won:
             if self.boss_phase == 1:
                 self.boss_phase = 2
+                self.seal_gauge.set_phase(2)
                 self.debug_phase = 2
                 self.seal_gauge.set_debug_value(0.5)
                 self.boss.reset_for_phase(2)
@@ -1806,9 +1805,9 @@ class ArenaScene:
 
     def draw_debug_panel(self):
         set_draw_color("actor_dark")
-        draw_filled_rectangle(20, 390, 430, 700)
+        draw_filled_rectangle(20, 364, 430, 700)  # 390 → 364: PHASE MOD 한 줄(26px) 추가
         set_draw_color("rear_edge")
-        draw_rectangle(20, 390, 430, 700)
+        draw_rectangle(20, 364, 430, 700)
 
         if self.debug_font is None:
             font_path = os.path.join(
@@ -1831,6 +1830,7 @@ class ArenaScene:
             f"INVULN     {'ON' if self.debug_invulnerability_enabled else f'{self.invulnerability_timer:4.2f}s'}",
             f"HITS       {self.successful_hits}",
             f"PHASE      {self.debug_phase}  [F5 jump]",
+            f"PHASE MOD  tel x{PHASE_MODIFIERS[self.boss_phase]['telegraph_scale']:.2f}  hit {PHASE_MODIFIERS[self.boss_phase]['hit_loss']:.2f}",
             f"GAUGE      {self.seal_gauge.value:4.0%}  [[ / ] adjust]",
             f"PATTERN    {self.debug_forced_pattern or '-'}  [F6 cycle]",
             f"SEED       {'FIXED ' + str(self.debug_pattern_seed) if self.debug_pattern_seed_fixed else 'RANDOM'}  [F7]",
@@ -1884,7 +1884,7 @@ class ArenaScene:
         pattern = PATTERNS[self.boss.current_pattern]
         visible = self.boss.telegraph_is_visible()
         elapsed = self.boss.telegraph_elapsed
-        progress = min(elapsed / pattern["telegraph"], 1.0)
+        progress = min(elapsed / self.boss.current_telegraph, 1.0)
         fill_alpha = 90 if visible else 0
         marker_alpha = int(60 + 140 * progress) if visible else 60
 

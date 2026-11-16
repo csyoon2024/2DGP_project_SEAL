@@ -16,6 +16,38 @@ PHASE_PATTERNS = {
     },
 }
 BOSS_HOME_X = 450
+
+# 페이즈별 수치 차등 — 페이즈로 달라지는 수치는 전부 여기 모은다 (패턴 가중치는 PHASE_PATTERNS).
+# 누수 속도(SealGauge.LEAK_PER_SECOND)는 일부러 넣지 않았다: 올리면 순수지가 떨어져
+# 페이즈가 길어지고, 2페이즈는 이미 약 40초로 상한이다.
+PHASE_MODIFIERS = {
+    1: {
+        # 기준값. 1페이즈는 차등 도입 전과 완전히 같아야 한다 (회귀 없음)
+        "telegraph_scale": 1.00,
+        "hit_loss": 0.15,
+        "awaken_threshold": 0.85,
+    },
+    2: {
+        # 예고 15% 단축: 내리찍기 0.35 → 0.30(하한), 돌진 0.70 → 0.595, 충격파 1.00 → 0.85,
+        #   유도탄 0.80 → 0.68. 눈에 띄게 빨라지되 하한 0.30을 넘지 않는 선.
+        #   지속·후경직은 그대로라 공격 기회는 줄지 않고, 패턴 주기가 짧아져 전투 길이는 늘지 않는다
+        "telegraph_scale": 0.85,
+        # 피격 손실 0.15 → 0.18 (+20%): 2페이즈의 실수 대가를 키운다. 각성 중 손실도 같은 비율
+        #   (0.20 → 0.24). 안 맞으면 전투 길이에 영향이 없다
+        "hit_loss": 0.18,
+        # 각성 진입 0.85 → 0.80: 더 일찍 각성한다. 해제선 0.60과 0.20 간격이 남아 경계에서
+        #   깜빡이지 않는다
+        "awaken_threshold": 0.80,
+    },
+}
+# 예고 시간 하한(초). 사람 반응 한계가 0.25초 근처라 그 아래로 내려가면 실력이 아니라 운이 된다
+MIN_TELEGRAPH = 0.30
+
+
+def telegraph_duration(pattern, phase):
+    """페이즈 배율과 하한을 적용한 예고 시간. 패턴 시작 시 한 번만 계산한다."""
+    scale = PHASE_MODIFIERS[phase]["telegraph_scale"]
+    return max(MIN_TELEGRAPH, PATTERNS[pattern]["telegraph"] * scale)
 # 내리찍기 충격이 앞줄에 먼저 닿고 뒷줄에는 이만큼 늦게 닿는다 (초).
 #   보스에서 가까운 앞줄이 먼저 맞아야 내리찍은 충격이 앞으로 퍼져 나오는 것처럼 읽힌다.
 #   0.12: 두 번 터지는 게 눈에 보일 만큼 길고, 내리찍기 실행 시간(0.15)과
@@ -125,6 +157,8 @@ class BossController:
         self.attack_elapsed = 0.0
         self.next_hit_index = 0
         self.telegraph_elapsed = 0.0
+        # 이번 패턴의 예고 시간 (페이즈 배율 적용, 패턴 시작 시 고정)
+        self.current_telegraph = 0.0
         self.secondary_target_x = None
         # 아직 터지지 않은 뒷줄 시간차 타격: (공격 경과 시간, BossAttack)
         self.pending_rear_hits = []
@@ -179,7 +213,7 @@ class BossController:
             if self.current_pattern == "charge":
                 # 예고 동안 플레이어 쪽으로 서서히 기운다
                 self.lean_progress = min(
-                    self.telegraph_elapsed / PATTERNS["charge"]["telegraph"],
+                    self.telegraph_elapsed / self.current_telegraph,
                     1.0,
                 )
             if self.timer <= 1e-9:
@@ -265,7 +299,9 @@ class BossController:
                 second_direction *= -1
             self.secondary_target_x = player_x + second_direction * 180
         self.state = "telegraph"
-        self.timer = PATTERNS[pattern]["telegraph"]
+        # 페이즈 배율은 여기서 한 번만 곱한다. 매 프레임 곱하면 고정 타임스텝 타이밍이 흔들린다
+        self.current_telegraph = telegraph_duration(pattern, phase)
+        self.timer = self.current_telegraph
         self.telegraph_elapsed = 0.0
 
     @property
@@ -279,6 +315,9 @@ class BossController:
             return False
 
         intervals = PATTERNS[self.current_pattern]["telegraph_blink"]
+        # 깜빡임 간격도 줄어든 예고 시간에 맞춰 같은 비율로 줄인다 (1페이즈는 배율 1)
+        ratio = self.current_telegraph / PATTERNS[self.current_pattern]["telegraph"]
+        intervals = tuple(interval * ratio for interval in intervals) if ratio != 1.0 else intervals
         elapsed = min(self.telegraph_elapsed, sum(intervals))
         for interval_index, interval_duration in enumerate(intervals):
             if elapsed < interval_duration:
