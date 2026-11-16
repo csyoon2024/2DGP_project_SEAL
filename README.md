@@ -13,8 +13,8 @@ python -m pip install -r requirements.txt
 python main.py
 ```
 
-Use the left/right arrows or `A`/`D` to move. Press `J` for a basic attack, `K`
-for a heavy attack, either `Shift` key to dodge, and `Space` to switch platforms.
+Use the left/right arrows or `A`/`D` to move. Left-click for a basic attack,
+right-click for a heavy attack, either `Shift` key to dodge, and `Space` to switch platforms.
 The fight starts on the rear platform.
 Press `F1` to toggle the debug panel, `F2` to show collision boxes, `F3` to
 toggle invulnerability, `F4` to reset the player, and `H` with the panel open to

@@ -1249,9 +1249,11 @@ class ArenaScene:
                     else "platform_1"
                 )
                 self.start_lane_transition(target_lane)
-            elif event.key == pico2d.SDLK_j:
+        elif event.type == pico2d.SDL_MOUSEBUTTONDOWN:
+            # 공격은 마우스: 왼쪽 클릭 = 기본 공격, 오른쪽 클릭 = 강공격
+            if event.button == pico2d.SDL_BUTTON_LEFT:
                 self.start_attack("basic")
-            elif event.key == pico2d.SDLK_k:
+            elif event.button == pico2d.SDL_BUTTON_RIGHT:
                 self.start_attack("heavy")
         elif event.type == pico2d.SDL_KEYUP:
             self.pressed_keys.discard(event.key)
