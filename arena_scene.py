@@ -55,6 +55,10 @@ BASIC_ATTACK_DURATION = 0.25
 BASIC_ATTACK_REACH = 120
 HEAVY_ATTACK_DURATION = 0.70
 PLAYER_MAX_HEALTH = 3
+# 사망 패널티: 부활할 때 게이지를 보스 쪽으로 이만큼 민다 (게이지는 리셋하지 않고 이어받는다).
+#   이게 없으면 체력 1칸·게이지 열세일 때 일부러 죽어 체력 3칸을 받는 게 이득이 된다.
+#   0.15 = 피격 1회(BOSS_HIT_LOSS)와 같은 양 — 죽기 직전보다 한 대 더 맞은 지점에서 재개
+DEATH_GAUGE_PENALTY = 0.15
 DEBUG_GAUGE_STEP = 0.05
 # 평시 보스가 화면에서 차지하는 높이(매몰선 ~ 뿔 끝, 줌 1.0 기준). 화면 720의 약 47%.
 #   예전 배율 1.5 고정(≈200px, 28%)은 앞줄에서 보기에 보스가 멀고 작아 근접 공격이 닿는
@@ -1568,9 +1572,12 @@ class ArenaScene:
         self.lane_transition_target = None
         self.lane_transition_elapsed = 0.0
         self.lane_switch_cooldown = 0.0
-        self.seal_gauge.set_debug_value(0.5)
+        # 게이지는 0.5로 되돌리지 않고 이어받는다. 죽기까지 세 대(≈0.45)를 이미 밀렸으므로
+        # 0.5 리셋은 이중 처벌이었다. 대신 사망 패널티만큼 보스 쪽으로 민다 (0~1 클램프 유지)
+        self.seal_gauge.player_hit(DEATH_GAUGE_PENALTY)
         self.boss.reset_for_phase(phase)
-        self.boss.set_awakened(False)
+        # 각성은 강제로 끄지 않고 게이지 값에 따라 다시 판정한다
+        self.boss.set_awakened(self.seal_gauge.boss_awakened)
 
     def resolve_boss_attack(self, attack):
         if self.debug_invulnerability_enabled or self.invulnerability_timer > 0:
