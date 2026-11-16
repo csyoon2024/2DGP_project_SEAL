@@ -55,6 +55,11 @@ BASIC_ATTACK_DURATION = 0.25
 BASIC_ATTACK_REACH = 120
 HEAVY_ATTACK_DURATION = 0.70
 PLAYER_MAX_HEALTH = 3
+# 2페이즈까지 끝나면 화면을 검게 꺼뜨리고 게임을 닫는다.
+#   여운 0.8초(보스가 쓰러진 걸 볼 시간) → 1.5초 동안 페이드 아웃 → 검은 화면 0.5초 → 종료
+GAME_END_LINGER = 0.8
+GAME_END_FADE = 1.5
+GAME_END_HOLD = 0.5
 # 사망 패널티: 부활할 때 게이지를 보스 쪽으로 이만큼 민다 (게이지는 리셋하지 않고 이어받는다).
 #   이게 없으면 체력 1칸·게이지 열세일 때 일부러 죽어 체력 3칸을 받는 게 이득이 된다.
 #   0.15 = 피격 1회(BOSS_HIT_LOSS)와 같은 양 — 죽기 직전보다 한 대 더 맞은 지점에서 재개
@@ -1176,6 +1181,8 @@ class ArenaScene:
         self.boss = BossController()
         self.boss_phase = 1
         self.boss_defeated = False
+        self.game_end_elapsed = 0.0
+        self.quit_requested = False
         self.debug_panel_visible = False
         self.debug_hitboxes_visible = False
         self.debug_invulnerability_enabled = False
@@ -1297,6 +1304,8 @@ class ArenaScene:
         self.debug_phase_jump_request = None
         self.debug_forced_pattern = None
         self.boss_defeated = False
+        self.game_end_elapsed = 0.0
+        self.quit_requested = False
         self.boss.reset_for_phase(1)
         self.boss.set_awakened(False)
 
@@ -1441,6 +1450,10 @@ class ArenaScene:
     def update(self, fixed_delta):
         self.update_camera(fixed_delta)
         if self.boss_defeated:
+            self.game_end_elapsed += fixed_delta
+            if self.game_end_elapsed >= GAME_END_LINGER + GAME_END_FADE + GAME_END_HOLD:
+                # GameFramework가 이 값을 보고 루프를 끝낸다
+                self.quit_requested = True
             return
 
         attack_locked = self.attack_type is not None
@@ -1770,6 +1783,21 @@ class ArenaScene:
 
         DRAW_OFFSET_X = 0
         DRAW_OFFSET_Y = 0
+        self.draw_game_end_fade()
+
+    def draw_game_end_fade(self):
+        """2페이즈 클리어 후 화면 전체(UI 포함)를 검게 덮는다."""
+        if not self.boss_defeated:
+            return
+        t = (self.game_end_elapsed - GAME_END_LINGER) / GAME_END_FADE
+        alpha = round(255 * max(0.0, min(t, 1.0)))
+        if alpha <= 0:
+            return
+        black = (0, 0, 0, alpha)
+        draw_polygon(
+            ((0, 0), (WIDTH, 0), (WIDTH, HEIGHT), (0, HEIGHT)),
+            (black, black, black, black),
+        )
 
     def draw_debug_panel(self):
         set_draw_color("actor_dark")

@@ -77,6 +77,10 @@ class GameFramework:
                     self.scene_manager.update(FIXED_DELTA)
                     accumulator -= FIXED_DELTA
 
+                # 장면이 종료를 요청하면 (보스 2페이즈 클리어 후 페이드 아웃) 게임을 닫는다
+                if getattr(self.scene_manager.current_scene, "quit_requested", False):
+                    self.running = False
+
                 pico2d.clear_canvas()
                 self.scene_manager.draw()
                 pico2d.update_canvas()
