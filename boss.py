@@ -152,7 +152,7 @@ class BossController:
         if self.state == "awakening":
             self.timer -= fixed_delta
             if self.timer <= 1e-9:
-                self.awakened = False
+                # 2페이즈 진입 연출이 끝나도 각성을 풀지 않는다 (2페이즈는 계속 각성)
                 self.state = "rest"
                 self.timer = self.PATTERN_GAP
             return attacks

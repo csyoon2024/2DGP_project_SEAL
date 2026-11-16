@@ -1309,6 +1309,11 @@ class ArenaScene:
         self.boss.reset_for_phase(1)
         self.boss.set_awakened(False)
 
+    def boss_should_awaken(self):
+        # 2페이즈는 처음부터 끝까지 각성 상태다. 예전에는 게이지를 60%까지 되밀면 2페이즈에서도
+        # 각성이 풀렸다. 1페이즈는 그대로 게이지로 판정한다 (85%에서 각성, 60%에서 해제)
+        return self.boss_phase >= 2 or self.seal_gauge.boss_awakened
+
     def receive_player_hit(self):
         if self.debug_invulnerability_enabled or self.invulnerability_timer > 0:
             return False
@@ -1477,7 +1482,7 @@ class ArenaScene:
         self.impact_flash_timer = max(0.0, self.impact_flash_timer - fixed_delta)
         self.screen_shake_frame += 1
         self.seal_gauge.update(fixed_delta)
-        self.boss.set_awakened(self.seal_gauge.boss_awakened)
+        self.boss.set_awakened(self.boss_should_awaken())
 
         if attack_locked:
             attack_duration = (
@@ -1530,7 +1535,7 @@ class ArenaScene:
             self.boss_phase = phase_jump
             self.debug_phase = phase_jump
             self.boss.reset_for_phase(phase_jump)
-            self.boss.set_awakened(self.seal_gauge.boss_awakened)
+            self.boss.set_awakened(self.boss_should_awaken())
 
         forced_pattern = None
         if self.boss.state == "rest" and self.boss.timer <= fixed_delta:
@@ -1593,7 +1598,7 @@ class ArenaScene:
         self.seal_gauge.player_hit(DEATH_GAUGE_PENALTY)
         self.boss.reset_for_phase(phase)
         # 각성은 강제로 끄지 않고 게이지 값에 따라 다시 판정한다
-        self.boss.set_awakened(self.seal_gauge.boss_awakened)
+        self.boss.set_awakened(self.boss_should_awaken())
 
     def resolve_boss_attack(self, attack):
         if self.debug_invulnerability_enabled or self.invulnerability_timer > 0:
