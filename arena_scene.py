@@ -158,6 +158,20 @@ LANE_VIEW_ZOOM = {"platform_2": 1.00, "platform_1": 1.12}
 VIEW_ZOOM_DURATION = 0.30
 view_zoom = 1.0
 
+# ---------------------------------------------------------------------------
+# 좌우 카메라 추적 — 소실점(VANISHING_X)이 아니라 카메라의 월드 x를 옮긴다.
+# 화면 이동량 = camera_x * depth 라서 가까운 것(뒷줄 1.0)은 많이, 먼 것(보스 0.55,
+# 뒷벽 0.40)은 적게 흐른다. 소실점을 옮기면 깊이와 무관하게 전부 똑같이 밀려 입체감이 없다.
+# CAMERA_FOLLOW 0.28: 플레이어 월드 x의 28%만 따라간다. 요청값 0.30이면 앞줄(줌 1.12)
+#   끝에서 보스가 중앙에서 103px 벗어나 기준(100px 이내)을 넘는다. 0.28이면 최대 96px.
+#   너무 크면 플레이어가 화면 중앙에 붙어 좌우 이동이 안 보이고, 너무 작으면 흐름이 안 보인다.
+# CAMERA_FOLLOW_TIME 0.12초: 지수 감쇠 시정수. 즉시 따라가면 카메라가 아니라 플레이어에
+#   붙은 것처럼 보인다. 0.12초면 이동을 멈춘 뒤 약 0.36초 안에 95% 따라붙는다.
+# ---------------------------------------------------------------------------
+CAMERA_FOLLOW = 0.28
+CAMERA_FOLLOW_TIME = 0.12
+camera_x = 0.0
+
 
 def zoom_point(x, y):
     """화면 좌표 한 점에 줌을 적용한다 (소실점 중심)."""
@@ -179,7 +193,14 @@ def project_unzoomed(world_x, depth, elevation=0.0):
 
 
 def project(world_x, depth, elevation=0.0):
-    return zoom_point(*project_unzoomed(world_x, depth, elevation))
+    # 순서: 카메라 오프셋(월드 단계) → 투영 → 줌(화면 단계, 소실점 중심).
+    # 줌을 먼저 하면 줌 중심이 플레이어를 따라다녀 어지럽다
+    return zoom_point(*project_unzoomed(world_x - camera_x, depth, elevation))
+
+
+def wall_center_x():
+    """뒷벽(깊이 BACK_WALL_DEPTH) 위의 화면 중앙 x — 카메라 이동이 깊이만큼 반영된다."""
+    return VANISHING_X - camera_x * BACK_WALL_DEPTH
 
 
 def logical_to_world_x(logical_x):
@@ -472,8 +493,8 @@ def draw_boss_backlight():
     rgb, alpha = BOSS_BACKLIGHT
     wall_y = VANISHING_Y - CAMERA_HEIGHT * BACK_WALL_DEPTH
     # 뒷벽 위 넓은 패널 — 보스 몸통 폭보다 넓게, 가장자리 90px에 걸쳐 사라진다
-    panel_left, panel_bottom = zoom_point(VANISHING_X - 150, wall_y + 10)
-    panel_right, panel_top = zoom_point(VANISHING_X + 150, HEIGHT - 120)
+    panel_left, panel_bottom = zoom_point(wall_center_x() - 150, wall_y + 10)
+    panel_right, panel_top = zoom_point(wall_center_x() + 150, HEIGHT - 120)
     draw_soft_panel(
         panel_left,
         panel_bottom,
@@ -485,7 +506,7 @@ def draw_boss_backlight():
     )
     # 머리·어깨 뒤에 더 진한 타원 — 윤곽선이 가장 중요한 부분을 밝힌다
     draw_radial_glow(
-        *zoom_point(VANISHING_X, wall_y + 180),
+        *zoom_point(wall_center_x(), wall_y + 180),
         260 * view_zoom,
         200 * view_zoom,
         rgb,
@@ -504,10 +525,10 @@ def draw_room(with_floor=True):
     # 뒷벽 — 위로 갈수록 어두워지는 수직 그라데이션
     draw_polygon(
         (
-            zoom_point(VANISHING_X - wall_half, wall_y),
-            zoom_point(VANISHING_X + wall_half, wall_y),
-            zoom_point(VANISHING_X + wall_half, HEIGHT),
-            zoom_point(VANISHING_X - wall_half, HEIGHT),
+            zoom_point(wall_center_x() - wall_half, wall_y),
+            zoom_point(wall_center_x() + wall_half, wall_y),
+            zoom_point(wall_center_x() + wall_half, HEIGHT),
+            zoom_point(wall_center_x() - wall_half, HEIGHT),
         ),
         ((24, 28, 40, 255), (24, 28, 40, 255), (10, 12, 18, 255), (10, 12, 18, 255)),
     )
@@ -538,8 +559,8 @@ def draw_room(with_floor=True):
             *project(side * ROOM_HALF_WIDTH, BACK_WALL_DEPTH, CEILING_HEIGHT),
         )
     draw_line(
-        *zoom_point(VANISHING_X - wall_half, wall_y),
-        *zoom_point(VANISHING_X + wall_half, wall_y),
+        *zoom_point(wall_center_x() - wall_half, wall_y),
+        *zoom_point(wall_center_x() + wall_half, wall_y),
     )
 
 
@@ -587,10 +608,10 @@ def draw_back_fog():
     # 뒷벽 — 바닥에서 위로 옅어진다
     draw_polygon(
         (
-            zoom_point(VANISHING_X - wall_half, wall_y),
-            zoom_point(VANISHING_X + wall_half, wall_y),
-            zoom_point(VANISHING_X + wall_half, wall_y + 220),
-            zoom_point(VANISHING_X - wall_half, wall_y + 220),
+            zoom_point(wall_center_x() - wall_half, wall_y),
+            zoom_point(wall_center_x() + wall_half, wall_y),
+            zoom_point(wall_center_x() + wall_half, wall_y + 220),
+            zoom_point(wall_center_x() - wall_half, wall_y + 220),
         ),
         (dense, dense, clear, clear),
     )
@@ -606,7 +627,7 @@ def draw_back_fog():
         (clear, clear, dense, dense),
     )
     # 보스 머리 뒤 은은한 후광 — 실루엣이 배경에서 떨어져 보이게
-    halo_center = zoom_point(VANISHING_X, VANISHING_Y - 90)
+    halo_center = zoom_point(wall_center_x(), VANISHING_Y - 90)
     segments = 24
     ring = [
         (
@@ -1110,6 +1131,8 @@ class ArenaScene:
         self.view_zoom_from = self.view_zoom
         self.view_zoom_to = self.view_zoom
         self.view_zoom_elapsed = VIEW_ZOOM_DURATION
+        # 좌우 카메라(월드 x). 시작 위치에서 바로 맞춰 첫 프레임에 미끄러지지 않게 한다
+        self.camera_x = self.camera_target_x()
         self.apply_view_zoom()
 
     def enter(self):
@@ -1315,11 +1338,20 @@ class ArenaScene:
         self.view_zoom = self.view_zoom_from + (
             self.view_zoom_to - self.view_zoom_from
         ) * eased
+
+        # 좌우 추적: 목표로 지수 감쇠 보간 (프레임 속도와 무관하게 같은 지연)
+        follow = 1.0 - math.exp(-fixed_delta / CAMERA_FOLLOW_TIME)
+        self.camera_x += (self.camera_target_x() - self.camera_x) * follow
         self.apply_view_zoom()
 
+    def camera_target_x(self):
+        return logical_to_world_x(self.player_logical_x) * CAMERA_FOLLOW
+
     def apply_view_zoom(self):
-        global view_zoom
+        """카메라 상태(줌, 좌우)를 그리기 함수들이 읽는 전역에 반영한다."""
+        global view_zoom, camera_x
         view_zoom = self.view_zoom
+        camera_x = self.camera_x
 
     def update(self, fixed_delta):
         self.update_camera(fixed_delta)
