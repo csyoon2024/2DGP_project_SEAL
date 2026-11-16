@@ -3,6 +3,9 @@ class SealGauge:
     LEAK_PER_SECOND = 0.015
     BASIC_ATTACK_GAIN = 0.04
     HEAVY_ATTACK_GAIN = 0.12
+    # 테스트용: 공격으로 미는 양 배율. 3.0 = 300% (기본 0.04 → 0.12, 강공격 0.12 → 0.36).
+    #   페이즈 전환·회복을 빨리 확인하려고 임시로 올렸다. 밸런스 확인 전에 1.0으로 되돌릴 것
+    ATTACK_GAIN_TEST_MULTIPLIER = 3.0
     BOSS_HIT_LOSS = 0.15
     AWAKENED_HIT_LOSS = 0.20
     AWAKEN_THRESHOLD = 0.85
@@ -44,7 +47,7 @@ class SealGauge:
             if attack_type == "heavy"
             else self.BASIC_ATTACK_GAIN
         )
-        self.value = max(0.0, self.value - gain)
+        self.value = max(0.0, self.value - gain * self.ATTACK_GAIN_TEST_MULTIPLIER)
         self._update_awakened_state()
 
     def player_hit(self, loss=None):
