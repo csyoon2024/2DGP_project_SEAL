@@ -2,8 +2,6 @@ import time
 
 import pico2d
 
-from scene_manager import SceneManager
-
 
 CANVAS_WIDTH = 1280
 CANVAS_HEIGHT = 720
@@ -12,8 +10,9 @@ MAX_FRAME_DELTA = 0.25
 
 
 class GameFramework:
-    def __init__(self):
-        self.scene_manager = SceneManager()
+    def __init__(self, scene_manager):
+        # 씬을 직접 받지 않고 SceneManager를 받는다. 첫 씬은 main.py가 넣어 둔다
+        self.scene_manager = scene_manager
         self.running = False
         self.canvas_open = False
 
@@ -48,9 +47,8 @@ class GameFramework:
         else:
             print("Fullscreen SDL helpers unavailable; using a 1280x720 window.")
 
-    def run(self, initial_scene):
+    def run(self):
         self.open()
-        self.scene_manager.change_scene(initial_scene)
         self.running = True
         previous_time = time.perf_counter()
         accumulator = 0.0
@@ -77,7 +75,7 @@ class GameFramework:
                     self.scene_manager.update(FIXED_DELTA)
                     accumulator -= FIXED_DELTA
 
-                # 장면이 종료를 요청하면 (보스 2페이즈 클리어 후 페이드 아웃) 게임을 닫는다
+                # 씬 매니저 없이 단독 실행된 씬이 종료를 요청하면 게임을 닫는다
                 if getattr(self.scene_manager.current_scene, "quit_requested", False):
                     self.running = False
 

@@ -55,11 +55,11 @@ BASIC_ATTACK_DURATION = 0.25
 BASIC_ATTACK_REACH = 120
 HEAVY_ATTACK_DURATION = 0.70
 PLAYER_MAX_HEALTH = 3
-# 2페이즈까지 끝나면 화면을 검게 꺼뜨리고 게임을 닫는다.
-#   여운 0.8초(보스가 쓰러진 걸 볼 시간) → 1.5초 동안 페이드 아웃 → 검은 화면 0.5초 → 종료
-GAME_END_LINGER = 0.8
-GAME_END_FADE = 1.5
-GAME_END_HOLD = 0.5
+# 보스 처치 연출 1.5초: 여운 0.5초(보스가 쓰러진 걸 볼 시간) → 1.0초 페이드 아웃 →
+#   보스 사이 화면(InterludeScene)으로 전환. 예전에는 2.8초 뒤 게임을 닫았다
+GAME_END_LINGER = 0.5
+GAME_END_FADE = 1.0
+GAME_END_HOLD = 0.0
 # 사망 패널티: 부활할 때 게이지를 보스 쪽으로 이만큼 민다 (게이지는 리셋하지 않고 이어받는다).
 #   이게 없으면 체력 1칸·게이지 열세일 때 일부러 죽어 체력 3칸을 받는 게 이득이 된다.
 #   0.15 = 피격 1회(BOSS_HIT_LOSS)와 같은 양 — 죽기 직전보다 한 대 더 맞은 지점에서 재개
@@ -1153,7 +1153,14 @@ def draw_player_placeholder(screen_x, foot_y, scale):
 
 
 class ArenaScene:
-    def __init__(self):
+    def __init__(self, scene_manager=None, run_state=None):
+        # 씬 전환용. 없으면(테스트 스크립트 등) 처치 연출 뒤 quit_requested만 세운다
+        self.scene_manager = scene_manager
+        self.run_state = run_state
+        # 전투 기록 (InterludeScene에 넘긴다). 판정에는 쓰지 않는다
+        self.battle_elapsed = 0.0
+        self.hits_taken = 0
+        self.battle_finished = False
         self.player_lane = "platform_2"
         self.player_logical_x = 310
         self.pressed_keys = set()
@@ -1327,7 +1334,33 @@ class ArenaScene:
             *lane_point(self.player_lane, self.player_logical_x)
         )
         self.trigger_screen_shake(8, 0.15)
+        self.hits_taken += 1
         return True
+
+    def battle_record(self):
+        from run_state import BattleRecord
+
+        return BattleRecord(
+            elapsed=self.battle_elapsed,
+            hits_taken=self.hits_taken,
+            health_left=self.player_health,
+            max_health=PLAYER_MAX_HEALTH,
+        )
+
+    def finish_battle(self):
+        """처치 연출이 끝나면 전투 기록을 넘기고 보스 사이 화면으로 간다."""
+        if self.scene_manager is None or self.run_state is None:
+            # 씬 매니저 없이 단독 실행된 경우 — GameFramework가 이 값을 보고 루프를 끝낸다
+            self.quit_requested = True
+            return
+        from interlude_scene import InterludeScene
+
+        record = self.battle_record()
+        self.run_state.record_battle(record)
+        self.battle_finished = True  # 한 번만 전환한다
+        self.scene_manager.change_scene(
+            InterludeScene(self.scene_manager, self.run_state, record)
+        )
 
     def recover_health_from_pushback(self):
         # 체력이 가득이면 회복할 게 없으니 기준점을 현재값으로 당겨, 되민 양을 미리 쌓아두지 못하게 한다
@@ -1453,10 +1486,13 @@ class ArenaScene:
         self.update_camera(fixed_delta)
         if self.boss_defeated:
             self.game_end_elapsed += fixed_delta
-            if self.game_end_elapsed >= GAME_END_LINGER + GAME_END_FADE + GAME_END_HOLD:
-                # GameFramework가 이 값을 보고 루프를 끝낸다
-                self.quit_requested = True
+            if (
+                not self.battle_finished
+                and self.game_end_elapsed >= GAME_END_LINGER + GAME_END_FADE + GAME_END_HOLD
+            ):
+                self.finish_battle()
             return
+        self.battle_elapsed += fixed_delta
 
         attack_locked = self.attack_type is not None
         move_right = any(
