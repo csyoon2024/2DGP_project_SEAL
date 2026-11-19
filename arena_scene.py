@@ -2011,7 +2011,7 @@ class ArenaScene:
             f"INVULN     {'ON' if self.debug_invulnerability_enabled else f'{self.invulnerability_timer:4.2f}s'}",
             f"HITS       {self.successful_hits}",
             f"PHASE      {self.debug_phase}  [F5 jump]",
-            f"PHASE MOD  tel x{PHASE_MODIFIERS[self.boss_phase]['telegraph_scale']:.2f}  hit {PHASE_MODIFIERS[self.boss_phase]['hit_loss']:.2f}",
+            f"PHASE MOD  tel x{PHASE_MODIFIERS[self.boss_phase]['telegraph_scale']:.2f}  hit {PHASE_MODIFIERS[self.boss_phase]['hit_loss'] * SealGauge.GAUGE_CHANGE_SCALE:.3f}",
             f"MOMENTUM   {self.momentum}/{SealGauge.MOMENTUM_MAX}  gain B {self.seal_gauge.attack_gain('basic', self.momentum):.0%} H {self.seal_gauge.attack_gain('heavy', self.momentum):.0%}",
             f"GAUGE      {self.seal_gauge.value:4.0%}  [[ / ] adjust]",
             f"PATTERN    {self.debug_forced_pattern or '-'}  [F6 cycle]",

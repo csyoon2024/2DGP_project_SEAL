@@ -9,6 +9,10 @@ class SealGauge:
     # 테스트용: 공격으로 미는 양 배율. 3.0 = 300% (기본 0.04 → 0.12, 강공격 0.12 → 0.36).
     #   페이즈 전환·회복을 빨리 확인하려고 임시로 올렸다. 밸런스 확인 전에 1.0으로 되돌릴 것
     ATTACK_GAIN_TEST_MULTIPLIER = 3.0
+    # 게이지 변화량 전체 배율 0.5: 게이지가 너무 빨리 오간다는 플레이 피드백으로 절반으로 낮췄다.
+    #   공격으로 미는 양(기세 표 포함)과 피격·사망 패널티로 밀리는 양에 똑같이 곱한다.
+    #   누수(LEAK_PER_SECOND)는 넣지 않았다 — 누수를 줄이면 순수지 구조가 바뀐다
+    GAUGE_CHANGE_SCALE = 0.5
     # 1페이즈 기준값. 실제 피격 손실·각성 진입선은 PHASE_MODIFIERS에서 페이즈별로 가져온다
     BOSS_HIT_LOSS = 0.15
     AWAKENED_HIT_LOSS = 0.20
@@ -60,7 +64,7 @@ class SealGauge:
             else self.MOMENTUM_BASIC_GAINS
         )
         momentum = max(0, min(int(momentum), self.MOMENTUM_MAX))
-        return table[momentum] * self.ATTACK_GAIN_TEST_MULTIPLIER
+        return table[momentum] * self.ATTACK_GAIN_TEST_MULTIPLIER * self.GAUGE_CHANGE_SCALE
 
     def player_attack_hit(self, attack_type, momentum=0):
         # 보스 쪽 끝(1.0)에서도 공격이 게이지를 되밀 수 있어야 하므로 player_won만 막는다
@@ -76,7 +80,7 @@ class SealGauge:
             return
 
         hit_loss = self.BOSS_HIT_LOSS if loss is None else loss
-        self.value = min(1.0, self.value + hit_loss)
+        self.value = min(1.0, self.value + hit_loss * self.GAUGE_CHANGE_SCALE)
         self._update_recovery_mark()
         self._update_awakened_state()
 
