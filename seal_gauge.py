@@ -20,6 +20,16 @@ class SealGauge:
     # 맞은 만큼 바로 되찾는 무한 회복은 막고, 꾸준히 때리면 회복되는 정도로 시작한다
     HEALTH_RECOVER_PUSHBACK = 0.25
 
+    # 기세(momentum)별 게이지 획득량. 인덱스 = 기세 0~4.
+    #   앞줄에서 적중할 때마다 기세가 1 오르고, 피격하면 0이 된다 (ArenaScene).
+    #   앞줄에 머물며 맞지 않고 계속 때릴수록 많이 밀지만, 한 대 맞으면 쌓은 걸 다 잃는 도박.
+    #   기세 0 칸은 기존 상수 그대로라 기세 0으로만 플레이하면 전과 완전히 같다.
+    #   기본 공격 4% → 12% (+2%씩, 최대 3배), 강공격 12% → 20% (+2%씩, 최대 1.67배):
+    #   같은 폭으로 올려 연타형 기본 공격 쪽이 기세의 이득을 더 크게 본다
+    MOMENTUM_MAX = 4
+    MOMENTUM_BASIC_GAINS = (BASIC_ATTACK_GAIN, 0.06, 0.08, 0.10, 0.12)
+    MOMENTUM_HEAVY_GAINS = (HEAVY_ATTACK_GAIN, 0.14, 0.16, 0.18, 0.20)
+
     def __init__(self):
         self.value = self.INITIAL_VALUE
         self.phase = 1
@@ -42,17 +52,23 @@ class SealGauge:
             self._update_recovery_mark()
         self._update_awakened_state()
 
-    def player_attack_hit(self, attack_type):
+    def attack_gain(self, attack_type, momentum=0):
+        """적중 1회가 게이지를 미는 실제 양 (기세 표 × 테스트 배율)."""
+        table = (
+            self.MOMENTUM_HEAVY_GAINS
+            if attack_type == "heavy"
+            else self.MOMENTUM_BASIC_GAINS
+        )
+        momentum = max(0, min(int(momentum), self.MOMENTUM_MAX))
+        return table[momentum] * self.ATTACK_GAIN_TEST_MULTIPLIER
+
+    def player_attack_hit(self, attack_type, momentum=0):
         # 보스 쪽 끝(1.0)에서도 공격이 게이지를 되밀 수 있어야 하므로 player_won만 막는다
         if self.player_won:
             return
 
-        gain = (
-            self.HEAVY_ATTACK_GAIN
-            if attack_type == "heavy"
-            else self.BASIC_ATTACK_GAIN
-        )
-        self.value = max(0.0, self.value - gain * self.ATTACK_GAIN_TEST_MULTIPLIER)
+        # 공격은 value를 빼는 방향 (0 = 플레이어 승리)
+        self.value = max(0.0, self.value - self.attack_gain(attack_type, momentum))
         self._update_awakened_state()
 
     def player_hit(self, loss=None):

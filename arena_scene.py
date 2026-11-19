@@ -60,6 +60,22 @@ PLAYER_MAX_HEALTH = 3
 GAME_END_LINGER = 0.5
 GAME_END_FADE = 1.0
 GAME_END_HOLD = 0.0
+# 기세 표시 — 플레이어 머리 위 4칸 (수치는 SealGauge.MOMENTUM_*_GAINS).
+# 칸 크기는 플레이어 배율 단위라 앞줄·뒷줄·줌에서 캐릭터와 같은 비율로 보인다.
+#   앞줄(배율 ≈ 0.8)에서 막대 폭 ≈ 75px, 칸 높이 ≈ 7px — 회피 중 곁눈으로 읽히는 크기
+MOMENTUM_CELL_WIDTH = 18
+MOMENTUM_CELL_HEIGHT = 9
+MOMENTUM_CELL_GAP = 5
+# 머리 꼭대기(발치 + 85)보다 조금 위. 회피 중 곁눈으로 보이게 캐릭터에 붙인다
+MOMENTUM_BAR_OFFSET = 100
+MOMENTUM_COLOR = (74, 158, 255)  # 플레이어 강조색 #4A9EFF
+MOMENTUM_MAX_COLOR = (170, 214, 255)  # 기세 4: 같은 계열을 더 밝게
+# 칸이 새로 채워질 때 흰색에서 강조색으로 돌아오는 시간
+MOMENTUM_FLASH_TIME = 0.18
+# 피격으로 0이 될 때 칸 조각이 튀어 흩어지는 시간. 잃는 게 눈에 보여야 도박이 성립한다
+MOMENTUM_SHATTER_TIME = 0.55
+MOMENTUM_SHARD_GRAVITY = 260  # 조각 낙하 가속 (플레이어 배율 단위/초²)
+
 # 사망 패널티: 부활할 때 게이지를 보스 쪽으로 이만큼 민다 (게이지는 리셋하지 않고 이어받는다).
 #   이게 없으면 체력 1칸·게이지 열세일 때 일부러 죽어 체력 3칸을 받는 게 이득이 된다.
 #   0.15 = 피격 1회(BOSS_HIT_LOSS)와 같은 양 — 죽기 직전보다 한 대 더 맞은 지점에서 재개
@@ -1160,6 +1176,12 @@ class ArenaScene:
         # 전투 기록 (InterludeScene에 넘긴다). 판정에는 쓰지 않는다
         self.battle_elapsed = 0.0
         self.hits_taken = 0
+        # 기세 0~4 (SealGauge.MOMENTUM_MAX). 앞줄 적중 +1, 뒷줄 전환 -1, 피격 0
+        self.momentum = 0
+        # 그리기 전용 연출 상태. 게임플레이 난수(debug_pattern_rng)와 섞이지 않게 따로 둔다
+        self.momentum_flash_timer = 0.0
+        self.momentum_shards = []
+        self.fx_rng = random.Random(0)
         self.battle_finished = False
         self.player_lane = "platform_2"
         self.player_logical_x = 310
@@ -1287,8 +1309,12 @@ class ArenaScene:
         self.lane_transition_target = target_lane
         self.lane_transition_elapsed = 0.0
         self.lane_switch_cooldown = LANE_SWITCH_COOLDOWN
+        if target_lane == "platform_2":
+            # 뒷줄로 물러서면 기세 -1. 전환을 시작한 순간 깎아 결정의 대가가 바로 보이게 한다
+            self.lose_momentum()
 
     def reset_player(self):
+        self.momentum = 0
         self.player_lane = "platform_2"
         self.player_logical_x = 310
         self.pressed_keys.clear()
@@ -1335,6 +1361,7 @@ class ArenaScene:
         )
         self.trigger_screen_shake(8, 0.15)
         self.hits_taken += 1
+        self.break_momentum()
         return True
 
     def battle_record(self):
@@ -1482,8 +1509,59 @@ class ArenaScene:
         view_zoom = self.view_zoom
         camera_x = self.camera_x
 
+    def update_momentum_fx(self, fixed_delta):
+        self.momentum_flash_timer = max(0.0, self.momentum_flash_timer - fixed_delta)
+        alive = []
+        for shard in self.momentum_shards:
+            shard["life"] -= fixed_delta
+            if shard["life"] <= 0:
+                continue
+            shard["vy"] -= MOMENTUM_SHARD_GRAVITY * fixed_delta
+            shard["x"] += shard["vx"] * fixed_delta
+            shard["y"] += shard["vy"] * fixed_delta
+            shard["angle"] += shard["spin"] * fixed_delta
+            alive.append(shard)
+        self.momentum_shards = alive
+
+    def gain_momentum(self):
+        if self.momentum < SealGauge.MOMENTUM_MAX:
+            self.momentum += 1
+            self.momentum_flash_timer = MOMENTUM_FLASH_TIME
+
+    def lose_momentum(self):
+        self.momentum = max(0, self.momentum - 1)
+
+    def break_momentum(self):
+        """피격: 기세 0. 차 있던 칸마다 조각 3개를 튀긴다."""
+        for index in range(self.momentum):
+            cell_x = self.momentum_cell_center(index)
+            for _ in range(3):
+                self.momentum_shards.append(
+                    {
+                        "x": cell_x + self.fx_rng.uniform(-4, 4),
+                        "y": self.fx_rng.uniform(-2, 2),
+                        "vx": cell_x * 2.2 + self.fx_rng.uniform(-55, 55),
+                        "vy": self.fx_rng.uniform(40, 120),
+                        "angle": self.fx_rng.uniform(0, math.tau),
+                        "spin": self.fx_rng.uniform(-14, 14),
+                        "size": self.fx_rng.uniform(4.5, 7.5),
+                        "life": MOMENTUM_SHATTER_TIME,
+                        "max_color": self.momentum == SealGauge.MOMENTUM_MAX,
+                    }
+                )
+        self.momentum = 0
+        self.momentum_flash_timer = 0.0
+
+    @staticmethod
+    def momentum_cell_center(index):
+        """index번 칸 중심의 가로 위치 (막대 가운데 기준, 플레이어 배율 단위)."""
+        count = SealGauge.MOMENTUM_MAX
+        step = MOMENTUM_CELL_WIDTH + MOMENTUM_CELL_GAP
+        return (index - (count - 1) / 2) * step
+
     def update(self, fixed_delta):
         self.update_camera(fixed_delta)
+        self.update_momentum_fx(fixed_delta)
         if self.boss_defeated:
             self.game_end_elapsed += fixed_delta
             if (
@@ -1531,7 +1609,10 @@ class ArenaScene:
                 if self.resolve_attack_hit():
                     self.successful_hits += 1
                     self.boss_hit_timer = 0.06
-                    self.seal_gauge.player_attack_hit(self.attack_type)
+                    # 획득량은 적중 전 기세로 정하고, 앞줄 적중이면 그다음에 기세 +1
+                    self.seal_gauge.player_attack_hit(self.attack_type, self.momentum)
+                    if self.player_lane == "platform_1":
+                        self.gain_momentum()
                     self.recover_health_from_pushback()
                 self.attack_hit_registered = True
             if self.attack_elapsed >= attack_duration - 1e-9:
@@ -1631,6 +1712,7 @@ class ArenaScene:
         # 게이지는 0.5로 되돌리지 않고 이어받는다. 죽기까지 세 대(≈0.45)를 이미 밀렸으므로
         # 0.5 리셋은 이중 처벌이었다. 대신 사망 패널티만큼 보스 쪽으로 민다 (0~1 클램프 유지)
         self.seal_gauge.player_hit(DEATH_GAUGE_PENALTY)
+        self.momentum = 0
         self.boss.reset_for_phase(phase)
         # 각성은 강제로 끄지 않고 게이지 값에 따라 다시 판정한다
         self.boss.set_awakened(self.boss_should_awaken())
@@ -1750,6 +1832,7 @@ class ArenaScene:
         # 깊이 배율(player_scale)은 투영에만 쓰고, 그리는 크기에는 카메라 줌을 곱한다
         player_scale *= view_zoom
         draw_player_placeholder(screen_x, player_y, player_scale)
+        self.draw_momentum(screen_x, player_y, player_scale)
         self.draw_player_health()
 
         if self.attack_type is not None:
@@ -1839,11 +1922,73 @@ class ArenaScene:
             (black, black, black, black),
         )
 
+    def draw_momentum(self, screen_x, foot_y, scale):
+        """플레이어 머리 위 기세 4칸. 플레이어 위치를 따라다닌다 (회피·레인 전환 중에도)."""
+        center_y = foot_y + MOMENTUM_BAR_OFFSET * scale
+        half_w = MOMENTUM_CELL_WIDTH * 0.5 * scale
+        half_h = MOMENTUM_CELL_HEIGHT * 0.5 * scale
+        slant = 2.5 * scale  # 평행사변형으로 기울여 속도감
+
+        def cell(center_x, grow=0.0):
+            hw, hh = half_w + grow, half_h + grow
+            return (
+                (center_x - hw - slant, center_y - hh),
+                (center_x + hw - slant, center_y - hh),
+                (center_x + hw + slant, center_y + hh),
+                (center_x - hw + slant, center_y + hh),
+            )
+
+        if self.momentum > 0:
+            maxed = self.momentum == SealGauge.MOMENTUM_MAX
+            color = MOMENTUM_MAX_COLOR if maxed else MOMENTUM_COLOR
+            if maxed:
+                # 기세 4: 막대 뒤로 맥박치는 빛
+                pulse = 0.5 + 0.5 * math.sin(self.battle_elapsed * 9.0)
+                draw_radial_glow(
+                    screen_x, center_y, 62 * scale, 20 * scale,
+                    MOMENTUM_MAX_COLOR, round(70 + 60 * pulse),
+                )
+            for index in range(SealGauge.MOMENTUM_MAX):
+                points = cell(screen_x + self.momentum_cell_center(index) * scale)
+                if index < self.momentum:
+                    rgb = color
+                    newest = index == self.momentum - 1
+                    if newest and self.momentum_flash_timer > 0:
+                        # 새로 찬 칸: 흰색에서 강조색으로, 살짝 컸다가 제자리
+                        t = self.momentum_flash_timer / MOMENTUM_FLASH_TIME
+                        rgb = tuple(round(c + (255 - c) * t) for c in color)
+                        points = cell(
+                            screen_x + self.momentum_cell_center(index) * scale,
+                            2.0 * scale * t,
+                        )
+                    draw_polygon(points, [rgb + (255,)] * 4)
+                else:
+                    # 빈 칸: 어두운 바탕 + 흐린 테두리
+                    draw_polygon(points, [(10, 12, 16, 200)] * 4)
+                    set_draw_rgb(*MOMENTUM_COLOR, 90)
+                    draw_polyline(points)
+
+        # 부서진 조각 — 기세가 0이어도 그린다
+        for shard in self.momentum_shards:
+            t = shard["life"] / MOMENTUM_SHATTER_TIME
+            rgb = MOMENTUM_MAX_COLOR if shard["max_color"] else MOMENTUM_COLOR
+            x = screen_x + shard["x"] * scale
+            y = center_y + shard["y"] * scale
+            size = shard["size"] * scale * (0.6 + 0.4 * t)
+            points = [
+                (
+                    x + math.cos(shard["angle"] + offset) * size,
+                    y + math.sin(shard["angle"] + offset) * size,
+                )
+                for offset in (0.0, 2.3, 4.1)
+            ]
+            draw_polygon(points, [rgb + (round(255 * t),)] * 3)
+
     def draw_debug_panel(self):
         set_draw_color("actor_dark")
-        draw_filled_rectangle(20, 364, 430, 700)  # 390 → 364: PHASE MOD 한 줄(26px) 추가
+        draw_filled_rectangle(20, 338, 430, 700)  # 390 → 338: PHASE MOD·MOMENTUM 두 줄(26px씩) 추가
         set_draw_color("rear_edge")
-        draw_rectangle(20, 364, 430, 700)
+        draw_rectangle(20, 338, 430, 700)
 
         if self.debug_font is None:
             font_path = os.path.join(
@@ -1867,6 +2012,7 @@ class ArenaScene:
             f"HITS       {self.successful_hits}",
             f"PHASE      {self.debug_phase}  [F5 jump]",
             f"PHASE MOD  tel x{PHASE_MODIFIERS[self.boss_phase]['telegraph_scale']:.2f}  hit {PHASE_MODIFIERS[self.boss_phase]['hit_loss']:.2f}",
+            f"MOMENTUM   {self.momentum}/{SealGauge.MOMENTUM_MAX}  gain B {self.seal_gauge.attack_gain('basic', self.momentum):.0%} H {self.seal_gauge.attack_gain('heavy', self.momentum):.0%}",
             f"GAUGE      {self.seal_gauge.value:4.0%}  [[ / ] adjust]",
             f"PATTERN    {self.debug_forced_pattern or '-'}  [F6 cycle]",
             f"SEED       {'FIXED ' + str(self.debug_pattern_seed) if self.debug_pattern_seed_fixed else 'RANDOM'}  [F7]",
