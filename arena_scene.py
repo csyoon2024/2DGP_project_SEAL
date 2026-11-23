@@ -1187,8 +1187,10 @@ class ArenaScene:
         self.momentum_flash_timer = 0.0
         self.momentum_shards = []
         self.fx_rng = random.Random(0)
-        # 대기 애니메이션 시계 (그리기 전용)
+        # 애니메이션 상태 (그리기 전용). 실제로 x가 움직였는지로 정해 벽에 막히면 대기로 돌아온다
         self.player_anim_time = 0.0
+        self.player_animation = "idle"
+        self.player_facing = 1  # 1 = 오른쪽(시트 원래 방향), -1 = 왼쪽(좌우 반전)
         self.battle_finished = False
         self.player_lane = "platform_2"
         self.player_logical_x = 310
@@ -1517,6 +1519,19 @@ class ArenaScene:
         view_zoom = self.view_zoom
         camera_x = self.camera_x
 
+    def update_player_animation(self, moved):
+        # 회피(대시)도 달리기 동작으로 보인다. 공격 중에는 움직이지 않으므로 대기
+        running = abs(moved) > 1e-6
+        if moved > 1e-6:
+            self.player_facing = 1
+        elif moved < -1e-6:
+            self.player_facing = -1
+        animation = "run" if running else "idle"
+        if animation != self.player_animation:
+            # 동작이 바뀌면 첫 프레임부터 — 달리기 0번은 대기에서 출발하는 자세다
+            self.player_animation = animation
+            self.player_anim_time = 0.0
+
     def update_momentum_fx(self, fixed_delta):
         self.player_anim_time += fixed_delta
         self.momentum_flash_timer = max(0.0, self.momentum_flash_timer - fixed_delta)
@@ -1582,6 +1597,7 @@ class ArenaScene:
         self.battle_elapsed += fixed_delta
 
         attack_locked = self.attack_type is not None
+        previous_x = self.player_logical_x
         move_right = any(
             key in self.pressed_keys for key in (pico2d.SDLK_RIGHT, pico2d.SDLK_d)
         )
@@ -1641,6 +1657,7 @@ class ArenaScene:
             PLAYER_X_MIN,
             min(self.player_logical_x, PLAYER_X_MAX),
         )
+        self.update_player_animation(self.player_logical_x - previous_x)
 
         self.lane_switch_cooldown = max(
             0.0,
@@ -1939,12 +1956,14 @@ class ArenaScene:
         # 발밑 그림자는 도형 캐릭터와 같다
         set_draw_color("shadow", 170, 0.7)
         draw_filled_ellipse(screen_x, foot_y + 3 * scale, 24 * scale, 8 * scale)
-        player_sprite.draw_idle(
+        player_sprite.draw(
+            self.player_animation,
             screen_x,
             foot_y,
             PLAYER_SPRITE_HEIGHT * scale,
             self.player_anim_time,
             HEIGHT,
+            flip=self.player_facing < 0,
             rim_px=1.5,
             rim_alpha=PLAYER_RIM_RGBA[3],
             offset=(DRAW_OFFSET_X, DRAW_OFFSET_Y),

@@ -1,8 +1,11 @@
-"""플레이어 대기(idle) 스프라이트.
+"""플레이어 스프라이트 (대기 idle / 달리기 run).
 
-player_idle.png: 3840×2160, 6열 × 6행, 칸 640×360, 35프레임(마지막 칸 비어 있음), 배경 투명.
-모든 프레임에서 발 위치가 같다 — 발 중심 x ≈ 326, 발바닥 y ≈ 332 (칸 왼쪽 위 기준),
-머리 꼭대기 y ≈ 30 → 캐릭터 키 ≈ 302px.
+두 시트 모두 3840×2160, 6열 × 6행, 칸 640×360, 배경 투명, 뒷모습(보스를 바라봄).
+  player_idle.png: 35프레임 (마지막 칸 비어 있음)
+  player_run.png : 36프레임
+같은 좌표계로 그려져 있어 발 기준점을 공유한다 — 발 중심 x ≈ 326, 발바닥 y ≈ 332
+(칸 왼쪽 위 기준), 머리 꼭대기 y ≈ 30 → 캐릭터 키 ≈ 302px. 달리기는 발이 뜨는 프레임이
+있어 발바닥이 314~334로 오르내리는데, 기준점을 고정해야 그 들썩임이 그대로 산다.
 
 원본을 화면 키 80~100px로 3배 넘게 줄이면 선형 보간으로도 자글거린다. 그래서 처음 그릴 때
 GPU로 한 번 절반 크기로 줄인 시트(칸 320×180)를 만들어 쓴다 (정확히 2배 축소 + 선형 보간 =
@@ -16,27 +19,31 @@ import pico2d
 import sdl2
 import sdl2.sdlimage as sdlimage
 
-SHEET_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "player_idle.png")
+ASSET_DIR = os.path.dirname(os.path.abspath(__file__))
 SHEET_COLUMNS = 6
-FRAME_COUNT = 35
 SOURCE_CELL = (640, 360)
 SOURCE_FOOT = (326, 332)  # 칸 안 발 중심 (왼쪽 위 기준)
 SOURCE_HEIGHT = 302  # 발바닥 ~ 머리 꼭대기
 DOWNSAMPLE = 2  # GPU로 한 번 줄이는 배율
 
-# 대기 동작 재생 속도. 35프레임 / 24fps ≈ 1.46초 한 주기 — 숨 쉬는 속도에 가깝다
-IDLE_FPS = 24
+SHEETS = {
+    # 대기: 35프레임 / 24fps ≈ 1.46초 한 주기 — 숨 쉬는 속도에 가깝다
+    "idle": {"file": "player_idle.png", "frames": 35, "fps": 24},
+    # 달리기: 36프레임 / 45fps = 0.8초 한 주기. 이동 속도(뒷줄 ≈ 420px/s)에서 발이
+    #   바닥에 미끄러져 보이지 않는 빠르기. 30fps(1.2초)는 걷는 것처럼 느렸다
+    "run": {"file": "player_run.png", "frames": 36, "fps": 45},
+}
 
-_state = None  # 처음 그릴 때 만든다: {"sprite", "silhouette", "cell", "foot", "height"}
+_sheets = None  # 처음 쓸 때 만든다: {이름: {"sprite", "silhouette", "cell", "foot", "height"}}
 
 
 def _renderer():
     return pico2d.open_canvas.__globals__.get("renderer")
 
 
-def _load(rim_rgb):
+def _load_sheet(path, rim_rgb):
     renderer = _renderer()
-    surface = sdlimage.IMG_Load(SHEET_PATH.encode("utf-8"))
+    surface = sdlimage.IMG_Load(path.encode("utf-8"))
     if not surface:
         return None
     full = sdl2.SDL_CreateTextureFromSurface(renderer, surface)
@@ -115,40 +122,56 @@ def _load(rim_rgb):
 
 
 def is_available(rim_rgb):
-    global _state
-    if _state is None:
-        _state = _load(rim_rgb) or False
-    return bool(_state)
+    """두 시트를 (처음 한 번) 읽는다. 대기 시트가 없으면 False — 도형 캐릭터로 대신 그린다."""
+    global _sheets
+    if _sheets is None:
+        _sheets = {}
+        for name, info in SHEETS.items():
+            loaded = _load_sheet(os.path.join(ASSET_DIR, info["file"]), rim_rgb)
+            if loaded:
+                _sheets[name] = loaded
+    return "idle" in _sheets
 
 
-def draw_idle(foot_x, foot_y, screen_height, anim_time, canvas_height,
-              rim_px=0.0, rim_alpha=0, offset=(0, 0)):
-    """발 중심(foot_x, foot_y — pico2d 좌표, 아래가 0)에 키 screen_height px로 그린다."""
-    state = _state
-    if not state:
+def draw(animation, foot_x, foot_y, screen_height, anim_time, canvas_height,
+         flip=False, rim_px=0.0, rim_alpha=0, offset=(0, 0)):
+    """발 중심(foot_x, foot_y — pico2d 좌표, 아래가 0)에 키 screen_height px로 그린다.
+
+    animation: "idle" / "run" (없으면 idle). flip: 좌우 반전 (왼쪽을 볼 때).
+    """
+    if not _sheets:
         return
+    if animation not in _sheets:
+        animation = "idle"
+    state = _sheets[animation]
+    info = SHEETS[animation]
     renderer = _renderer()
     cell_w, cell_h = state["cell"]
     foot_cx, foot_cy = state["foot"]
     scale = screen_height / state["height"]
-    frame = int(anim_time * IDLE_FPS) % FRAME_COUNT
+    frame = int(anim_time * info["fps"]) % info["frames"]
     column, row = frame % SHEET_COLUMNS, frame // SHEET_COLUMNS
     source = sdl2.SDL_Rect(column * cell_w, row * cell_h, cell_w, cell_h)
 
-    # SDL 좌표는 위가 0. 발 기준점이 (foot_x, foot_y)에 오도록 칸 왼쪽 위를 정한다
-    left = foot_x + offset[0] - foot_cx * scale
+    # SDL 좌표는 위가 0. 발 기준점이 (foot_x, foot_y)에 오도록 칸 왼쪽 위를 정한다.
+    # 반전하면 칸 안 발 위치도 거울상(cell_w - foot_cx)이 된다
+    anchor_x = (cell_w - foot_cx) if flip else foot_cx
+    left = foot_x + offset[0] - anchor_x * scale
     top = (canvas_height - (foot_y + offset[1])) - foot_cy * scale
     width, height = cell_w * scale, cell_h * scale
+    flip_flag = sdl2.SDL_FLIP_HORIZONTAL if flip else sdl2.SDL_FLIP_NONE
+
+    def copy(texture, dx=0.0, dy=0.0):
+        sdl2.SDL_RenderCopyExF(
+            renderer, texture, source,
+            sdl2.SDL_FRect(left + dx, top + dy, width, height),
+            0.0, None, flip_flag,
+        )
 
     silhouette = state["silhouette"]
     if silhouette is not None and rim_px > 0 and rim_alpha > 0:
         # 림 라이트: 단색 실루엣을 상하좌우로 조금씩 밀어 깐 뒤 본 스프라이트를 덮는다
         sdl2.SDL_SetTextureAlphaMod(silhouette, rim_alpha)
         for dx, dy in ((rim_px, 0), (-rim_px, 0), (0, rim_px), (0, -rim_px)):
-            sdl2.SDL_RenderCopyF(
-                renderer, silhouette, source,
-                sdl2.SDL_FRect(left + dx, top + dy, width, height),
-            )
-    sdl2.SDL_RenderCopyF(
-        renderer, state["sprite"], source, sdl2.SDL_FRect(left, top, width, height)
-    )
+            copy(silhouette, dx, dy)
+    copy(state["sprite"])
