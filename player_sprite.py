@@ -4,6 +4,8 @@
   player_idle.png  : 35프레임 (마지막 칸 비어 있음)
   player_run.png   : 36프레임 — 0~8 출발(대기 → 숙인 자세), 9~20 달리기 반복, 21~35 감속 → 대기
   player_attack.png: 36프레임 — 0~6 준비, 7~17 회전 베기(검기), 18~27 거두기, 28~35는 대기와 거의 같다
+  player_frontDash.png: 36프레임 — 뒷줄 → 앞줄 도약. 0~3 대기, 4~11 웅크려 박차기,
+    12~23 공중(발바닥이 338 → 316으로 뜬다), 24~35 착지 → 대기
 같은 좌표계로 그려져 있어 발 기준점을 공유한다 — 발 중심 x ≈ 326, 발바닥 y ≈ 332
 (칸 왼쪽 위 기준), 머리 꼭대기 y ≈ 30 → 캐릭터 키 ≈ 302px. 달리기는 발이 뜨는 프레임이
 있어 발바닥이 314~334로 오르내리는데, 기준점을 고정해야 그 들썩임이 그대로 산다.
@@ -44,7 +46,26 @@ SHEETS = {
     # 공격: 고정 fps가 아니라 공격 시간에 맞춰 늘이고 줄인다 (attack_frame 참고).
     #   기본 공격 0.25초와 강공격 0.70초가 같은 시트를 쓴다
     "attack": {"file": "player_attack.png", "frames": 36, "fps": 0},
+    # 앞줄로 도약: 레인 전환 시간(0.25초)에 맞춰 늘인다 (front_dash_frame 참고)
+    "front_dash": {"file": "player_frontDash.png", "frames": 36, "fps": 0},
 }
+
+# 앞줄 도약 구간. 전환하는 동안 박차기 → 공중 → 땅에 닿기, 도착한 뒤 착지 → 대기.
+#   0~3은 대기와 같아 건너뛴다 (누르자마자 몸이 움직여야 한다)
+FRONT_DASH_START = 4
+FRONT_DASH_TOUCHDOWN = 24  # 전환이 끝나는 순간(앞줄 도착) 이 프레임
+FRONT_DASH_END = 35
+# 착지(24~35, 12프레임)는 도착 뒤 이 속도로 — 0.33초. 서 있을 때만, 움직이면 바로 끊긴다
+FRONT_DASH_LAND_FPS = 36
+
+
+def front_dash_frame(elapsed, duration):
+    """도약 시작 후 경과 시간 → 프레임 (끝나면 None). duration = 레인 전환 시간."""
+    if elapsed < duration:
+        span = FRONT_DASH_TOUCHDOWN - FRONT_DASH_START
+        return FRONT_DASH_START + int(span * max(elapsed, 0.0) / duration)
+    frame = FRONT_DASH_TOUCHDOWN + int((elapsed - duration) * FRONT_DASH_LAND_FPS)
+    return frame if frame <= FRONT_DASH_END else None
 
 # 검기가 몸 앞을 크게 지나는 프레임. 판정이 들어가는 순간(공격 시간의 50%)에 이 프레임이 오게 한다
 ATTACK_HIT_FRAME = 10

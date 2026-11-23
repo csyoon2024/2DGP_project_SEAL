@@ -1538,6 +1538,24 @@ class ArenaScene:
         좌우 반전은 판정과 같은 facing_direction을 따른다 — 칼이 판정 쪽으로 나간다.
         """
         moving = abs(moved) > 1e-6
+        if self.lane_transition_target == "platform_1":
+            # 뒷줄 → 앞줄 도약. 전환 시계(lane_transition_elapsed)에 맞춘다
+            self.player_animation = "front_dash"
+            self.player_anim_time = self.lane_transition_elapsed
+            return
+        if self.player_animation == "front_dash":
+            # 도착 뒤 착지 꼬리 — 움직이거나 공격하면 끊는다
+            if self.attack_type is not None:
+                self.player_animation = "idle"  # 아래 공격 분기가 이어받는다
+            elif moving:
+                self.run_skip_intro = False
+                self.set_player_animation("run")
+                return
+            elif player_sprite.front_dash_frame(self.player_anim_time, LANE_SWITCH_DURATION) is None:
+                self.set_player_animation("idle")
+                return
+            else:
+                return
         if self.attack_type is not None:
             if self.player_animation != "attack" or self.attack_visual_count != self.attack_count:
                 self.attack_visual_count = self.attack_count
@@ -2010,6 +2028,11 @@ class ArenaScene:
             frame = self.player_attack_frame()
             if frame is not None:
                 return "attack", frame
+            return "idle", None
+        if self.player_animation == "front_dash":
+            frame = player_sprite.front_dash_frame(self.player_anim_time, LANE_SWITCH_DURATION)
+            if frame is not None:
+                return "front_dash", frame
             return "idle", None
         if self.player_animation == "run":
             return "run", player_sprite.run_frame(self.player_anim_time, self.run_skip_intro)
