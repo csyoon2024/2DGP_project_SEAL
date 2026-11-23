@@ -1538,8 +1538,9 @@ class ArenaScene:
         좌우 반전은 판정과 같은 facing_direction을 따른다 — 칼이 판정 쪽으로 나간다.
         """
         moving = abs(moved) > 1e-6
-        if self.lane_transition_target == "platform_1":
-            # 뒷줄 → 앞줄 도약. 전환 시계(lane_transition_elapsed)에 맞춘다
+        if self.lane_transition_target is not None:
+            # 레인 전환 도약. 뒷줄 → 앞줄 시트를 앞줄 → 뒷줄에도 그대로 쓴다 (뒷걸음 시트가 따로 없다).
+            #   전환 시계(lane_transition_elapsed)에 맞춘다
             self.player_animation = "front_dash"
             self.player_anim_time = self.lane_transition_elapsed
             return
