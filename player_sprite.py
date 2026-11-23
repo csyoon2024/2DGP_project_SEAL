@@ -1,8 +1,9 @@
-"""플레이어 스프라이트 (대기 idle / 달리기 run).
+"""플레이어 스프라이트 (대기 idle / 달리기 run / 공격 attack).
 
-두 시트 모두 3840×2160, 6열 × 6행, 칸 640×360, 배경 투명, 뒷모습(보스를 바라봄).
-  player_idle.png: 35프레임 (마지막 칸 비어 있음)
-  player_run.png : 36프레임
+세 시트 모두 3840×2160, 6열 × 6행, 칸 640×360, 배경 투명, 뒷모습(보스를 바라봄).
+  player_idle.png  : 35프레임 (마지막 칸 비어 있음)
+  player_run.png   : 36프레임
+  player_attack.png: 36프레임 — 0~6 준비, 7~17 회전 베기(검기), 18~27 거두기, 28~35는 대기와 거의 같다
 같은 좌표계로 그려져 있어 발 기준점을 공유한다 — 발 중심 x ≈ 326, 발바닥 y ≈ 332
 (칸 왼쪽 위 기준), 머리 꼭대기 y ≈ 30 → 캐릭터 키 ≈ 302px. 달리기는 발이 뜨는 프레임이
 있어 발바닥이 314~334로 오르내리는데, 기준점을 고정해야 그 들썩임이 그대로 산다.
@@ -32,7 +33,27 @@ SHEETS = {
     # 달리기: 36프레임 / 45fps = 0.8초 한 주기. 이동 속도(뒷줄 ≈ 420px/s)에서 발이
     #   바닥에 미끄러져 보이지 않는 빠르기. 30fps(1.2초)는 걷는 것처럼 느렸다
     "run": {"file": "player_run.png", "frames": 36, "fps": 45},
+    # 공격: 고정 fps가 아니라 공격 시간에 맞춰 늘이고 줄인다 (attack_frame 참고).
+    #   기본 공격 0.25초와 강공격 0.70초가 같은 시트를 쓴다
+    "attack": {"file": "player_attack.png", "frames": 36, "fps": 0},
 }
+
+# 검기가 몸 앞을 크게 지나는 프레임. 판정이 들어가는 순간(공격 시간의 50%)에 이 프레임이 오게 한다
+ATTACK_HIT_FRAME = 10
+# 칼을 거둬 대기 자세로 돌아온 프레임. 28 이후는 대기와 거의 같아 공격 시간을 늘리기만 한다
+ATTACK_END_FRAME = 27
+
+
+def attack_frame(progress, hit_progress=0.5):
+    """공격 진행도 0~1 → 공격 시트 프레임. 판정 시점(hit_progress)에 ATTACK_HIT_FRAME이 온다."""
+    progress = max(0.0, min(progress, 1.0))
+    if progress < hit_progress:
+        frame = ATTACK_HIT_FRAME * progress / hit_progress
+    else:
+        frame = ATTACK_HIT_FRAME + (ATTACK_END_FRAME - ATTACK_HIT_FRAME) * (
+            (progress - hit_progress) / (1.0 - hit_progress)
+        )
+    return min(int(frame), ATTACK_END_FRAME)
 
 _sheets = None  # 처음 쓸 때 만든다: {이름: {"sprite", "silhouette", "cell", "foot", "height"}}
 
@@ -134,13 +155,15 @@ def is_available(rim_rgb):
 
 
 def draw(animation, foot_x, foot_y, screen_height, anim_time, canvas_height,
-         flip=False, rim_px=0.0, rim_alpha=0, offset=(0, 0)):
+         flip=False, rim_px=0.0, rim_alpha=0, offset=(0, 0), frame=None):
     """발 중심(foot_x, foot_y — pico2d 좌표, 아래가 0)에 키 screen_height px로 그린다.
 
-    animation: "idle" / "run" (없으면 idle). flip: 좌우 반전 (왼쪽을 볼 때).
+    animation: "idle" / "run" / "attack" (없으면 idle). flip: 좌우 반전 (왼쪽을 볼 때).
+    frame: 프레임을 직접 정할 때 (공격). None이면 anim_time × fps.
     """
     if not _sheets:
         return
+    requested = animation
     if animation not in _sheets:
         animation = "idle"
     state = _sheets[animation]
@@ -149,7 +172,8 @@ def draw(animation, foot_x, foot_y, screen_height, anim_time, canvas_height,
     cell_w, cell_h = state["cell"]
     foot_cx, foot_cy = state["foot"]
     scale = screen_height / state["height"]
-    frame = int(anim_time * info["fps"]) % info["frames"]
+    if frame is None or animation != requested:
+        frame = int(anim_time * info["fps"]) % info["frames"]
     column, row = frame % SHEET_COLUMNS, frame // SHEET_COLUMNS
     source = sdl2.SDL_Rect(column * cell_w, row * cell_h, cell_w, cell_h)
 

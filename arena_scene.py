@@ -1190,7 +1190,6 @@ class ArenaScene:
         # 애니메이션 상태 (그리기 전용). 실제로 x가 움직였는지로 정해 벽에 막히면 대기로 돌아온다
         self.player_anim_time = 0.0
         self.player_animation = "idle"
-        self.player_facing = 1  # 1 = 오른쪽(시트 원래 방향), -1 = 왼쪽(좌우 반전)
         self.battle_finished = False
         self.player_lane = "platform_2"
         self.player_logical_x = 310
@@ -1520,13 +1519,14 @@ class ArenaScene:
         camera_x = self.camera_x
 
     def update_player_animation(self, moved):
-        # 회피(대시)도 달리기 동작으로 보인다. 공격 중에는 움직이지 않으므로 대기
-        running = abs(moved) > 1e-6
-        if moved > 1e-6:
-            self.player_facing = 1
-        elif moved < -1e-6:
-            self.player_facing = -1
-        animation = "run" if running else "idle"
+        # 공격 중이면 공격 동작, 실제로 움직였으면 달리기(회피·대시 포함), 아니면 대기.
+        # 좌우 반전은 판정과 같은 facing_direction을 따른다 — 칼이 판정 쪽으로 나간다
+        if self.attack_type is not None:
+            animation = "attack"
+        elif abs(moved) > 1e-6:
+            animation = "run"
+        else:
+            animation = "idle"
         if animation != self.player_animation:
             # 동작이 바뀌면 첫 프레임부터 — 달리기 0번은 대기에서 출발하는 자세다
             self.player_animation = animation
@@ -1861,7 +1861,8 @@ class ArenaScene:
         self.draw_momentum(screen_x, player_y, player_scale)
         self.draw_player_health()
 
-        if self.attack_type is not None:
+        # 예전 도형 베기 선은 스프라이트가 없을 때만 — 공격 시트에 검기가 그려져 있다
+        if self.attack_type is not None and not player_sprite.is_available(PLAYER_RIM_RGBA[:3]):
             set_draw_color("accent_light")
             attack_duration = (
                 BASIC_ATTACK_DURATION
@@ -1948,6 +1949,18 @@ class ArenaScene:
             (black, black, black, black),
         )
 
+    def player_attack_frame(self):
+        """공격 중이면 공격 시트 프레임 (공격 시간에 맞춰 늘임), 아니면 None."""
+        if self.attack_type is None:
+            return None
+        duration = (
+            BASIC_ATTACK_DURATION
+            if self.attack_type == "basic"
+            else HEAVY_ATTACK_DURATION
+        )
+        # 판정은 공격 시간의 50%에 들어간다 (update의 attack_duration * 0.5)
+        return player_sprite.attack_frame(self.attack_elapsed / duration, 0.5)
+
     def draw_player(self, screen_x, foot_y, scale):
         """대기 스프라이트. 이미지를 못 읽으면 예전 도형 캐릭터로 그린다."""
         if not player_sprite.is_available(PLAYER_RIM_RGBA[:3]):
@@ -1963,7 +1976,8 @@ class ArenaScene:
             PLAYER_SPRITE_HEIGHT * scale,
             self.player_anim_time,
             HEIGHT,
-            flip=self.player_facing < 0,
+            flip=self.facing_direction < 0,
+            frame=self.player_attack_frame(),
             rim_px=1.5,
             rim_alpha=PLAYER_RIM_RGBA[3],
             offset=(DRAW_OFFSET_X, DRAW_OFFSET_Y),
