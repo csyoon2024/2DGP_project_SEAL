@@ -1190,6 +1190,9 @@ class ArenaScene:
         # 애니메이션 상태 (그리기 전용). 실제로 x가 움직였는지로 정해 벽에 막히면 대기로 돌아온다
         self.player_anim_time = 0.0
         self.player_animation = "idle"
+        # 실제로 나간 공격 횟수 (그리기 전용). 홀수 번째 공격은 공격 동작을 좌우 반전해
+        #   시트 한 장으로 좌우 번갈아 베는 연타처럼 보이게 한다
+        self.attack_count = 0
         self.battle_finished = False
         self.player_lane = "platform_2"
         self.player_logical_x = 310
@@ -1456,6 +1459,7 @@ class ArenaScene:
         self.attack_type = attack_type
         self.attack_elapsed = 0.0
         self.attack_hit_registered = False
+        self.attack_count += 1
 
     def resolve_attack_hit(self):
         if self.player_lane != "platform_1":
@@ -1949,6 +1953,16 @@ class ArenaScene:
             (black, black, black, black),
         )
 
+    def player_sprite_flipped(self):
+        """바라보는 방향으로 반전하고, 홀수 번째 공격이면 한 번 더 뒤집는다 (그리기 전용).
+
+        판정 방향(facing_direction)은 그대로다. 짝수 번째 클릭은 기본 동작, 홀수 번째는 반대 동작.
+        """
+        flipped = self.facing_direction < 0
+        if self.attack_type is not None and self.attack_count % 2 == 1:
+            flipped = not flipped
+        return flipped
+
     def player_attack_frame(self):
         """공격 중이면 공격 시트 프레임 (공격 시간에 맞춰 늘임), 아니면 None."""
         if self.attack_type is None:
@@ -1976,7 +1990,7 @@ class ArenaScene:
             PLAYER_SPRITE_HEIGHT * scale,
             self.player_anim_time,
             HEIGHT,
-            flip=self.facing_direction < 0,
+            flip=self.player_sprite_flipped(),
             frame=self.player_attack_frame(),
             rim_px=1.5,
             rim_alpha=PLAYER_RIM_RGBA[3],
