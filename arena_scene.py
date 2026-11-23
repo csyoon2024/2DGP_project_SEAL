@@ -7,6 +7,7 @@ import pico2d
 import sdl2
 
 from seal_gauge import SealGauge
+import player_sprite
 from pico2d import (
     draw_circle as pico_draw_circle,
     draw_line as pico_draw_line,
@@ -60,6 +61,10 @@ PLAYER_MAX_HEALTH = 3
 GAME_END_LINGER = 0.5
 GAME_END_FADE = 1.0
 GAME_END_HOLD = 0.0
+# 플레이어 스프라이트의 화면 키 (플레이어 배율 단위). 뒷줄 100px, 앞줄(배율 0.71 × 줌 1.12) ≈ 80px.
+#   예전 도형 캐릭터(머리 꼭대기 ≈ 85)보다 조금 크게 — 그림체의 머리·검이 읽히는 최소 크기
+PLAYER_SPRITE_HEIGHT = 100
+
 # 기세 표시 — 플레이어 머리 위 4칸 (수치는 SealGauge.MOMENTUM_*_GAINS).
 # 칸 크기는 플레이어 배율 단위라 앞줄·뒷줄·줌에서 캐릭터와 같은 비율로 보인다.
 #   앞줄(배율 ≈ 0.8)에서 막대 폭 ≈ 75px, 칸 높이 ≈ 7px — 회피 중 곁눈으로 읽히는 크기
@@ -67,7 +72,7 @@ MOMENTUM_CELL_WIDTH = 18
 MOMENTUM_CELL_HEIGHT = 9
 MOMENTUM_CELL_GAP = 5
 # 머리 꼭대기(발치 + 85)보다 조금 위. 회피 중 곁눈으로 보이게 캐릭터에 붙인다
-MOMENTUM_BAR_OFFSET = 100
+MOMENTUM_BAR_OFFSET = PLAYER_SPRITE_HEIGHT + 12
 MOMENTUM_COLOR = (74, 158, 255)  # 플레이어 강조색 #4A9EFF
 MOMENTUM_MAX_COLOR = (170, 214, 255)  # 기세 4: 같은 계열을 더 밝게
 # 칸이 새로 채워질 때 흰색에서 강조색으로 돌아오는 시간
@@ -1182,6 +1187,8 @@ class ArenaScene:
         self.momentum_flash_timer = 0.0
         self.momentum_shards = []
         self.fx_rng = random.Random(0)
+        # 대기 애니메이션 시계 (그리기 전용)
+        self.player_anim_time = 0.0
         self.battle_finished = False
         self.player_lane = "platform_2"
         self.player_logical_x = 310
@@ -1234,7 +1241,8 @@ class ArenaScene:
         self.boss_awaken_blend = 0.0
 
     def enter(self):
-        pass
+        # 스프라이트를 전투 시작 때 미리 읽는다. 첫 프레임에 읽으면 약 75ms 끊긴다
+        player_sprite.is_available(PLAYER_RIM_RGBA[:3])
 
     def exit(self):
         pass
@@ -1510,6 +1518,7 @@ class ArenaScene:
         camera_x = self.camera_x
 
     def update_momentum_fx(self, fixed_delta):
+        self.player_anim_time += fixed_delta
         self.momentum_flash_timer = max(0.0, self.momentum_flash_timer - fixed_delta)
         alive = []
         for shard in self.momentum_shards:
@@ -1831,7 +1840,7 @@ class ArenaScene:
         platform_scale = logical_pixels(player_scale)
         # 깊이 배율(player_scale)은 투영에만 쓰고, 그리는 크기에는 카메라 줌을 곱한다
         player_scale *= view_zoom
-        draw_player_placeholder(screen_x, player_y, player_scale)
+        self.draw_player(screen_x, player_y, player_scale)
         self.draw_momentum(screen_x, player_y, player_scale)
         self.draw_player_health()
 
@@ -1920,6 +1929,25 @@ class ArenaScene:
         draw_polygon(
             ((0, 0), (WIDTH, 0), (WIDTH, HEIGHT), (0, HEIGHT)),
             (black, black, black, black),
+        )
+
+    def draw_player(self, screen_x, foot_y, scale):
+        """대기 스프라이트. 이미지를 못 읽으면 예전 도형 캐릭터로 그린다."""
+        if not player_sprite.is_available(PLAYER_RIM_RGBA[:3]):
+            draw_player_placeholder(screen_x, foot_y, scale)
+            return
+        # 발밑 그림자는 도형 캐릭터와 같다
+        set_draw_color("shadow", 170, 0.7)
+        draw_filled_ellipse(screen_x, foot_y + 3 * scale, 24 * scale, 8 * scale)
+        player_sprite.draw_idle(
+            screen_x,
+            foot_y,
+            PLAYER_SPRITE_HEIGHT * scale,
+            self.player_anim_time,
+            HEIGHT,
+            rim_px=1.5,
+            rim_alpha=PLAYER_RIM_RGBA[3],
+            offset=(DRAW_OFFSET_X, DRAW_OFFSET_Y),
         )
 
     def draw_momentum(self, screen_x, foot_y, scale):
