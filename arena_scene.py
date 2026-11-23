@@ -1193,6 +1193,9 @@ class ArenaScene:
         # 실제로 나간 공격 횟수 (그리기 전용). 홀수 번째 공격은 공격 동작을 좌우 반전해
         #   시트 한 장으로 좌우 번갈아 베는 연타처럼 보이게 한다
         self.attack_count = 0
+        self.attack_visual_count = 0  # 지금 그리는 공격 동작이 몇 번째 공격인지
+        self.attack_visual_duration = BASIC_ATTACK_DURATION
+        self.run_skip_intro = False
         self.battle_finished = False
         self.player_lane = "platform_2"
         self.player_logical_x = 310
@@ -1522,19 +1525,50 @@ class ArenaScene:
         view_zoom = self.view_zoom
         camera_x = self.camera_x
 
+    def set_player_animation(self, animation):
+        self.player_animation = animation
+        self.player_anim_time = 0.0
+
     def update_player_animation(self, moved):
-        # 공격 중이면 공격 동작, 실제로 움직였으면 달리기(회피·대시 포함), 아니면 대기.
-        # 좌우 반전은 판정과 같은 facing_direction을 따른다 — 칼이 판정 쪽으로 나간다
+        """그리기 전용 동작 상태: idle / run / brake / attack.
+
+        공격 중이면 attack (공격 시간에 맞춰 늘임, 끝난 뒤 꼬리는 서 있을 때만).
+        실제로 움직였으면 run (회피·대시 포함) — 출발 구간 후 반복.
+        달리다 멈추면 brake (감속 프레임) 후 idle.
+        좌우 반전은 판정과 같은 facing_direction을 따른다 — 칼이 판정 쪽으로 나간다.
+        """
+        moving = abs(moved) > 1e-6
         if self.attack_type is not None:
-            animation = "attack"
-        elif abs(moved) > 1e-6:
-            animation = "run"
-        else:
-            animation = "idle"
-        if animation != self.player_animation:
-            # 동작이 바뀌면 첫 프레임부터 — 달리기 0번은 대기에서 출발하는 자세다
-            self.player_animation = animation
-            self.player_anim_time = 0.0
+            if self.player_animation != "attack" or self.attack_visual_count != self.attack_count:
+                self.attack_visual_count = self.attack_count
+                self.attack_visual_duration = (
+                    BASIC_ATTACK_DURATION
+                    if self.attack_type == "basic"
+                    else HEAVY_ATTACK_DURATION
+                )
+                self.player_animation = "attack"
+            # 공격 중에는 판정 시계(attack_elapsed)에 맞춘다
+            self.player_anim_time = self.attack_elapsed
+            return
+
+        if self.player_animation == "attack":
+            if moving:
+                self.run_skip_intro = False
+                self.set_player_animation("run")
+            elif self.player_attack_frame() is None:
+                self.set_player_animation("idle")
+            return
+
+        if moving:
+            if self.player_animation != "run":
+                # 제동 중에 다시 달리면 출발(일어선 자세) 구간을 건너뛴다
+                self.run_skip_intro = self.player_animation == "brake"
+                self.set_player_animation("run")
+        elif self.player_animation == "run":
+            self.set_player_animation("brake")
+        elif self.player_animation == "brake":
+            if player_sprite.brake_frame(self.player_anim_time) is None:
+                self.set_player_animation("idle")
 
     def update_momentum_fx(self, fixed_delta):
         self.player_anim_time += fixed_delta
@@ -1959,21 +1993,31 @@ class ArenaScene:
         판정 방향(facing_direction)은 그대로다. 짝수 번째 클릭은 기본 동작, 홀수 번째는 반대 동작.
         """
         flipped = self.facing_direction < 0
-        if self.attack_type is not None and self.attack_count % 2 == 1:
+        if self.player_animation == "attack" and self.attack_visual_count % 2 == 1:
             flipped = not flipped
         return flipped
 
     def player_attack_frame(self):
-        """공격 중이면 공격 시트 프레임 (공격 시간에 맞춰 늘임), 아니면 None."""
-        if self.attack_type is None:
-            return None
-        duration = (
-            BASIC_ATTACK_DURATION
-            if self.attack_type == "basic"
-            else HEAVY_ATTACK_DURATION
-        )
+        """공격 동작 프레임 (꼬리 포함). 끝났으면 None."""
         # 판정은 공격 시간의 50%에 들어간다 (update의 attack_duration * 0.5)
-        return player_sprite.attack_frame(self.attack_elapsed / duration, 0.5)
+        return player_sprite.attack_frame(
+            self.player_anim_time, self.attack_visual_duration, 0.5
+        )
+
+    def player_sprite_frame(self):
+        """(시트 이름, 프레임) — 프레임이 None이면 시간 × fps로 돈다 (대기)."""
+        if self.player_animation == "attack":
+            frame = self.player_attack_frame()
+            if frame is not None:
+                return "attack", frame
+            return "idle", None
+        if self.player_animation == "run":
+            return "run", player_sprite.run_frame(self.player_anim_time, self.run_skip_intro)
+        if self.player_animation == "brake":
+            frame = player_sprite.brake_frame(self.player_anim_time)
+            if frame is not None:
+                return "run", frame
+        return "idle", None
 
     def draw_player(self, screen_x, foot_y, scale):
         """대기 스프라이트. 이미지를 못 읽으면 예전 도형 캐릭터로 그린다."""
@@ -1983,15 +2027,16 @@ class ArenaScene:
         # 발밑 그림자는 도형 캐릭터와 같다
         set_draw_color("shadow", 170, 0.7)
         draw_filled_ellipse(screen_x, foot_y + 3 * scale, 24 * scale, 8 * scale)
+        sheet, frame = self.player_sprite_frame()
         player_sprite.draw(
-            self.player_animation,
+            sheet,
             screen_x,
             foot_y,
             PLAYER_SPRITE_HEIGHT * scale,
             self.player_anim_time,
             HEIGHT,
             flip=self.player_sprite_flipped(),
-            frame=self.player_attack_frame(),
+            frame=frame,
             rim_px=1.5,
             rim_alpha=PLAYER_RIM_RGBA[3],
             offset=(DRAW_OFFSET_X, DRAW_OFFSET_Y),

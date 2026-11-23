@@ -2,7 +2,7 @@
 
 세 시트 모두 3840×2160, 6열 × 6행, 칸 640×360, 배경 투명, 뒷모습(보스를 바라봄).
   player_idle.png  : 35프레임 (마지막 칸 비어 있음)
-  player_run.png   : 36프레임
+  player_run.png   : 36프레임 — 0~8 출발(대기 → 숙인 자세), 9~20 달리기 반복, 21~35 감속 → 대기
   player_attack.png: 36프레임 — 0~6 준비, 7~17 회전 베기(검기), 18~27 거두기, 28~35는 대기와 거의 같다
 같은 좌표계로 그려져 있어 발 기준점을 공유한다 — 발 중심 x ≈ 326, 발바닥 y ≈ 332
 (칸 왼쪽 위 기준), 머리 꼭대기 y ≈ 30 → 캐릭터 키 ≈ 302px. 달리기는 발이 뜨는 프레임이
@@ -27,12 +27,20 @@ SOURCE_FOOT = (326, 332)  # 칸 안 발 중심 (왼쪽 위 기준)
 SOURCE_HEIGHT = 302  # 발바닥 ~ 머리 꼭대기
 DOWNSAMPLE = 2  # GPU로 한 번 줄이는 배율
 
+# 달리기 시트 구간. 반복 9~20은 프레임 윤곽을 비교해 고른 이음매가 가장 매끄러운 구간
+#   (20 → 9 겹침 0.78, 이웃 프레임끼리 평균 ≈ 0.70)
+RUN_INTRO_END = 8  # 0~8: 출발, 한 번만
+RUN_LOOP = (9, 20)  # 반복
+RUN_BRAKE = (27, 35)  # 멈출 때 한 번 재생하고 대기로 (28 이후는 대기 자세와 거의 같다)
+# 36fps: 출발 0.25초, 반복 한 주기(12프레임) 0.33초. 이동 속도(뒷줄 ≈ 420px/s)에 발이 맞는 빠르기
+RUN_FPS = 36
+
 SHEETS = {
     # 대기: 35프레임 / 24fps ≈ 1.46초 한 주기 — 숨 쉬는 속도에 가깝다
     "idle": {"file": "player_idle.png", "frames": 35, "fps": 24},
-    # 달리기: 36프레임 / 45fps = 0.8초 한 주기. 이동 속도(뒷줄 ≈ 420px/s)에서 발이
-    #   바닥에 미끄러져 보이지 않는 빠르기. 30fps(1.2초)는 걷는 것처럼 느렸다
-    "run": {"file": "player_run.png", "frames": 36, "fps": 45},
+    # 달리기: 고정 반복이 아니라 출발·반복·제동 구간으로 나눠 쓴다 (run_frame / brake_frame).
+    #   36프레임을 통째로 돌리면 반복할 때마다 대기 자세로 일어섰다 다시 숙인다
+    "run": {"file": "player_run.png", "frames": 36, "fps": RUN_FPS},
     # 공격: 고정 fps가 아니라 공격 시간에 맞춰 늘이고 줄인다 (attack_frame 참고).
     #   기본 공격 0.25초와 강공격 0.70초가 같은 시트를 쓴다
     "attack": {"file": "player_attack.png", "frames": 36, "fps": 0},
@@ -44,16 +52,46 @@ ATTACK_HIT_FRAME = 10
 ATTACK_END_FRAME = 27
 
 
-def attack_frame(progress, hit_progress=0.5):
-    """공격 진행도 0~1 → 공격 시트 프레임. 판정 시점(hit_progress)에 ATTACK_HIT_FRAME이 온다."""
-    progress = max(0.0, min(progress, 1.0))
-    if progress < hit_progress:
-        frame = ATTACK_HIT_FRAME * progress / hit_progress
-    else:
-        frame = ATTACK_HIT_FRAME + (ATTACK_END_FRAME - ATTACK_HIT_FRAME) * (
-            (progress - hit_progress) / (1.0 - hit_progress)
-        )
+# 판정 뒤(검기 → 칼 거두기) 구간을 공격 시간보다 이만큼 길게 재생한다. 판정 전은 판정 시점에
+#   베기 프레임이 와야 해서 늘일 수 없다. 공격이 끝난 뒤 남는 꼬리는 서 있는 동안만 재생되고,
+#   움직이거나 다시 공격하면 바로 끊긴다 (판정·이동은 그대로).
+#   기본 공격 판정 뒤 0.125초 → 0.21초, 강공격 0.35초 → 0.6초
+ATTACK_RECOVER_SLOWDOWN = 1.7
+
+
+def attack_frame(elapsed, duration, hit_ratio=0.5):
+    """공격 시작 후 경과 시간 → 공격 시트 프레임 (끝나면 None).
+
+    판정 시점(duration × hit_ratio)에 ATTACK_HIT_FRAME이 오고, 그 뒤는
+    ATTACK_RECOVER_SLOWDOWN만큼 느리게 ATTACK_END_FRAME까지 간다.
+    """
+    hit_time = duration * hit_ratio
+    if elapsed < hit_time:
+        return int(ATTACK_HIT_FRAME * max(elapsed, 0.0) / hit_time)
+    recover_time = (duration - hit_time) * ATTACK_RECOVER_SLOWDOWN
+    frame = ATTACK_HIT_FRAME + (ATTACK_END_FRAME - ATTACK_HIT_FRAME) * (
+        (elapsed - hit_time) / recover_time
+    )
+    if frame > ATTACK_END_FRAME + 0.999:
+        return None
     return min(int(frame), ATTACK_END_FRAME)
+
+
+def run_frame(elapsed, skip_intro=False):
+    """달리기 시작 후 경과 시간 → 프레임. 제동 중에 다시 달리면 출발 구간을 건너뛴다."""
+    count = int(elapsed * RUN_FPS)
+    if skip_intro:
+        count += RUN_INTRO_END + 1
+    if count <= RUN_INTRO_END:
+        return count
+    loop_start, loop_end = RUN_LOOP
+    return loop_start + (count - RUN_INTRO_END - 1) % (loop_end - loop_start + 1)
+
+
+def brake_frame(elapsed):
+    """멈춘 뒤 경과 시간 → 제동 프레임 (끝나면 None)."""
+    frame = RUN_BRAKE[0] + int(elapsed * RUN_FPS)
+    return frame if frame <= RUN_BRAKE[1] else None
 
 _sheets = None  # 처음 쓸 때 만든다: {이름: {"sprite", "silhouette", "cell", "foot", "height"}}
 
