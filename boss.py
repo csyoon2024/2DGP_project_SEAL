@@ -2,16 +2,20 @@ from dataclasses import dataclass
 
 
 PHASE_PATTERNS = {
+    # 후려치기(backhand) 추가로 가중치 재배분 — 1페이즈 slam 50 → 40, shockwave 30 → 25,
+    # charge 20 → 15 / 2페이즈 slam 35 → 30, charge 20 → 15, homing 15 → 10
     1: {
-        "slam": 50,
-        "charge": 20,
-        "shockwave": 30,
+        "slam": 40,
+        "backhand": 20,
+        "shockwave": 25,
+        "charge": 15,
     },
     2: {
-        "slam": 35,
-        "charge": 20,
+        "slam": 30,
+        "backhand": 15,
         "shockwave": 20,
-        "homing": 15,
+        "charge": 15,
+        "homing": 10,
         "slam_double": 10,
     },
 }
@@ -69,6 +73,21 @@ PATTERNS = {
         "marker": "spot",
         "pose": "slam",
         "shake": (6, 0.12),
+    },
+    # 후려치기 — 한 팔을 수평으로 뻗어 옆에서 쓸어친다. 앞줄 전용.
+    #   판정폭 200: 회피 대시 거리(160)보다 넓게 잡아 좌우 회피보다 뒷줄로 물러나는 쪽을 유도한다
+    "backhand": {
+        "kind": "front",
+        "telegraph": 0.50,
+        "duration": 0.20,
+        "recovery": 0.60,
+        "hitbox_width": 200,
+        "hit_times": (0.0,),
+        "telegraph_blink": (0.25, 0.15, 0.10),
+        "aim": "player_x",
+        "marker": "sweep",
+        "pose": "backhand",
+        "shake": (8, 0.14),
     },
     "charge": {
         "kind": "pierce",
@@ -279,7 +298,8 @@ class BossController:
         self.target_x = None
         self.secondary_target_x = None
         self.pending_rear_hits = []
-        if pattern in ("slam", "slam_double"):
+        if pattern in ("slam", "slam_double", "backhand"):
+            # 조준은 예고 시작 시 플레이어 논리 x로 고정
             self.target_x = player_x
             self.target_lane = "platform_1"
         elif pattern == "charge":

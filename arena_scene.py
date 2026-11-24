@@ -951,8 +951,15 @@ def draw_boss_placeholder(
     center_x=640,
     burial_y=330,
     lean_offset=0.0,
+    pose_side=1,
+    head_lift=0.0,
+    eye_glow=0.0,
 ):
     """보스 1 — 땅에 반쯤 묻힌 거상 상반신.
+
+    pose_side: 한 팔 포즈(후려치기)에서 휘두르는 팔이 출발하는 쪽 (-1 왼쪽 / 1 오른쪽).
+    head_lift(0~1): 머리를 드는 양. eye_glow(0~1): 눈을 밝히는 양 (유도탄 예고·발사).
+    반환: 두 눈 사이 화면 좌표 (유도탄 발사 지점).
 
     burial_y(매몰선)는 몸통이 땅에서 나오는 높이다. 그 아래(다리·발치 그림자,
     바닥에 박힌 손)는 클립해서 그리지 않는다.
@@ -976,7 +983,8 @@ def draw_boss_placeholder(
     body_half_width = 42 * scale
     body_bottom = foot_y + 34 * scale
     body_top = foot_y + 142 * scale
-    head_y = foot_y + 166 * scale
+    # 유도탄 예고: 머리를 최대 12 들어 올린다 (뿔 끝은 천장에서 잘린다)
+    head_y = foot_y + (166 + 12 * head_lift) * scale
 
     def set_boss_color(color_name):
         # 알파 0.6 → 불투명, 채도·블루 틴트 제거: 반투명 청색 보스는 벽(≈#181C28)과 명도가
@@ -1067,8 +1075,17 @@ def draw_boss_placeholder(
         draw_arm(-1, 54, foot_y + 125 * scale, 26, foot_y + 104 * scale)
         draw_arm(1, 54, foot_y + 125 * scale, 26, foot_y + 104 * scale)
     elif pose == "homing":
-        draw_arm(-1, 56, foot_y + 116 * scale, 38, foot_y + 84 * scale)
-        draw_arm(1, 76, foot_y + 144 * scale, 126, foot_y + 150 * scale)
+        # 유도탄은 머리(눈)에서 나간다. 팔은 몸 옆에 붙이고 머리를 든다 (head_lift)
+        draw_arm(-1, 54, foot_y + 104 * scale, 66, foot_y + 74 * scale)
+        draw_arm(1, 54, foot_y + 104 * scale, 66, foot_y + 74 * scale)
+    elif pose == "backhand":
+        # 후려치기 예고: 한 팔을 충격파와 같은 높이로 수평으로 뻗어 뒤로 젖힌다. 다른 팔은 대기
+        draw_arm(pose_side, 75, foot_y + 142 * scale, 118, foot_y + 146 * scale)
+        draw_arm(-pose_side, 56, foot_y + 108 * scale, 78, foot_y + 82 * scale)
+    elif pose == "backhand_impact":
+        # 후려치기 실행: 같은 팔이 몸 앞을 가로질러 반대쪽 낮은 곳까지 쓸고 지나간다
+        draw_arm(pose_side, 30, foot_y + 118 * scale, -96, foot_y + 96 * scale)
+        draw_arm(-pose_side, 56, foot_y + 108 * scale, 78, foot_y + 82 * scale)
     elif pose in ("slam_impact", "shockwave_impact"):
         draw_arm(-1, 68, foot_y + 76 * scale, 90, foot_y + 12 * scale)
         draw_arm(1, 68, foot_y + 76 * scale, 90, foot_y + 12 * scale)
@@ -1087,6 +1104,12 @@ def draw_boss_placeholder(
     # 눈 — 빨강 발광 #E01C2C (BOSS1_SPEC 보스 강조색). 실루엣 안에서 유일하게 빛나는 점.
     # 각성 시 더 밝고 커지던 변화는 뺐다 — 상태와 무관하게 같다
     eye_rgb, eye_radius, glow_radius, glow_alpha = (224, 28, 44), 4.0, 12, 110
+    if eye_glow > 0:
+        # 유도탄 예고·발사: 눈이 밝고 커진다 (빨강 → 주황빛 흰색 쪽으로)
+        eye_rgb = tuple(round(c + (t - c) * eye_glow) for c, t in zip(eye_rgb, (255, 196, 150)))
+        eye_radius *= 1.0 + 0.5 * eye_glow
+        glow_radius *= 1.0 + 1.6 * eye_glow
+        glow_alpha = round(glow_alpha + (230 - glow_alpha) * eye_glow)
     for eye_side in (-1, 1):
         eye_x = head_x + eye_side * 10 * scale
         # 주변 약한 발광 — 가장자리로 갈수록 투명
@@ -1098,6 +1121,7 @@ def draw_boss_placeholder(
     # 매몰선의 흙더미 — 잘린 단면 대신 몸이 땅에 박혀 있는 것처럼 보이게
     set_boss_color("shadow")
     draw_filled_ellipse(center_x, burial_y, BOSS_MOUND_HALF_WIDTH * scale, 9 * scale)
+    return head_x, head_y
 
 
 def draw_player_placeholder(screen_x, foot_y, scale):
@@ -1246,6 +1270,8 @@ class ArenaScene:
         self.apply_view_zoom()
         # 각성 연출 진행도 0~1 (그리기 전용). 깊이·크기·역광을 이 값으로 섞는다
         self.boss_awaken_blend = 0.0
+        # 보스 두 눈 사이 화면 좌표 (보스를 그릴 때 갱신). 유도탄 발사 지점
+        self.boss_eye_screen = (VANISHING_X, HEIGHT / 2)
 
     def enter(self):
         # 스프라이트를 전투 시작 때 미리 읽는다. 첫 프레임에 읽으면 약 75ms 끊긴다
@@ -1859,6 +1885,13 @@ class ArenaScene:
                     boss_pose = "slam_impact"
                 elif self.boss.current_pattern == "shockwave":
                     boss_pose = "shockwave_impact"
+                elif self.boss.current_pattern == "backhand":
+                    boss_pose = "backhand_impact"
+        # 후려치기: 조준 반대쪽에서 팔을 젖혔다가 조준 쪽으로 쓸어친다
+        backhand_side = 1
+        if self.boss.current_pattern == "backhand" and self.boss.target_x is not None:
+            backhand_side = -1 if self.boss.target_x >= self.boss.position_x else 1
+        head_lift, eye_glow = self.boss_homing_head()
 
         boss_screen_x, boss_foot_y, boss_depth = boss_anchor(
             self.boss.position_x,
@@ -1870,7 +1903,8 @@ class ArenaScene:
         boss_lean_px = (
             self.boss.current_lean_x * logical_pixels(boss_depth) * BOSS_LEAN_DRAW_RATIO
         )
-        draw_boss_placeholder(
+        # 반환값(두 눈 사이)은 유도탄 발사 지점으로 쓴다
+        self.boss_eye_screen = draw_boss_placeholder(
             self.boss_awaken_visual(),
             self.boss_hit_timer > 0,
             self.boss_defeated,
@@ -1879,6 +1913,9 @@ class ArenaScene:
             boss_screen_x,
             boss_foot_y,
             boss_lean_px,
+            backhand_side,
+            head_lift,
+            eye_glow,
         )
 
         draw_lane("platform_1", "front_lane", "front_edge", 8)
@@ -2222,6 +2259,16 @@ class ArenaScene:
             draw_polyline(quad)
             return
 
+        if pattern["marker"] == "sweep":
+            # 후려치기: 앞줄의 판정 범위 전체를 칠한다 (각성 판정 배율 포함 — 실제 판정과 같은 폭)
+            left, right = self.backhand_range()
+            quad = lane_quad("platform_1", left, right)
+            set_draw_color("accent", fill_alpha)
+            draw_polygon(quad)
+            set_draw_color("accent_light", 255 if visible else 45)
+            draw_polyline(quad)
+            return
+
         if pattern["marker"] == "column":
             half_width = pattern["hitbox_width"] * 0.5
             left = self.boss.target_x - half_width
@@ -2261,6 +2308,21 @@ class ArenaScene:
                 screen_y + 3,
             )
 
+    def boss_homing_head(self):
+        """유도탄 예고·발사 중 (머리 드는 양, 눈 밝기) — 0~1. 그리기 전용."""
+        if self.boss.current_pattern != "homing":
+            return 0.0, 0.0
+        if self.boss.state == "telegraph":
+            t = min(self.boss.telegraph_elapsed / self.boss.current_telegraph, 1.0)
+            return t * t * (3.0 - 2.0 * t), t
+        if self.boss.state == "active":
+            return 1.0, 1.0
+        if self.boss.state == "recovery":
+            # 후경직 동안 머리를 내리고 눈빛을 거둔다
+            t = 1.0 - min(self.boss.timer / PATTERNS["homing"]["recovery"], 1.0)
+            return 1.0 - t, max(0.0, 1.0 - 2.0 * t)
+        return 0.0, 0.0
+
     def draw_homing_projectile(self):
         if self.boss.current_pattern != "homing" or self.boss.state != "active":
             return
@@ -2270,13 +2332,9 @@ class ArenaScene:
             self.boss.attack_elapsed / PATTERNS["homing"]["duration"],
             1.0,
         )
-        boss_screen_x, boss_foot_y, _ = boss_anchor(
-            self.boss.position_x,
-            self.boss.forward_progress,
-            self.boss_awaken_visual(),
-        )
-        launch_y = boss_foot_y + 220 * view_zoom
-        projectile_x = boss_screen_x + (target_x - boss_screen_x) * progress
+        # 구체는 보스의 두 눈 사이에서 생겨 날아간다 (예전: 팔 높이)
+        launch_x, launch_y = self.boss_eye_screen
+        projectile_x = launch_x + (target_x - launch_x) * progress
         projectile_y = launch_y + (target_y - launch_y) * progress
 
         set_draw_color("accent", 100)
@@ -2289,8 +2347,40 @@ class ArenaScene:
         set_draw_color("accent_light")
         draw_filled_circle(projectile_x, projectile_y, (8 + 12 * progress) * view_zoom)
 
+    def backhand_range(self):
+        """후려치기 판정 범위 (논리 x). resolve_boss_attack과 같은 폭 (+ 플레이어 반폭 25 제외)."""
+        hitbox_scale = BossController.AWAKENING_HITBOX_SCALE if self.boss.awakened else 1.0
+        half = PATTERNS["backhand"]["hitbox_width"] * hitbox_scale * 0.5
+        target = self.boss.target_x if self.boss.target_x is not None else BOSS_LOGICAL_X
+        return max(0, target - half), min(PLAYER_LOGICAL_WIDTH, target + half)
+
     def draw_active_boss_effects(self):
         if self.boss.state != "active" or self.boss.current_pattern is None:
+            return
+        if self.boss.current_pattern == "backhand":
+            # 쓸고 지나가는 빛의 띠: 팔이 출발한 쪽에서 조준 쪽으로 훑는다
+            pattern = PATTERNS["backhand"]
+            progress = min(self.boss.attack_elapsed / pattern["duration"], 1.0)
+            left, right = self.backhand_range()
+            from_right = self.boss.target_x is not None and self.boss.target_x < self.boss.position_x
+            width = right - left
+            head = right - width * progress if from_right else left + width * progress
+            tail = right if from_right else left
+            fade = round(220 * (1.0 - 0.7 * progress))
+            bright, dim = (255, 214, 170, fade), (255, 107, 53, 0)
+            a, b = (head, tail) if from_right else (tail, head)
+            lane = LANES["platform_1"]
+            ends = (dim, bright) if not from_right else (bright, dim)
+            wa, wb = logical_to_world_x(a), logical_to_world_x(b)
+            draw_polygon(
+                (
+                    project(wa, lane["near"], lane["elevation"]),
+                    project(wb, lane["near"], lane["elevation"]),
+                    project(wb, lane["far"], lane["elevation"]),
+                    project(wa, lane["far"], lane["elevation"]),
+                ),
+                (ends[0], ends[1], ends[1], ends[0]),
+            )
             return
 
         pattern_name = self.boss.current_pattern
