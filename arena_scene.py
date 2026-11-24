@@ -8,6 +8,7 @@ import sdl2
 
 from seal_gauge import SealGauge
 import player_sprite
+import boss_sprite
 from pico2d import (
     draw_circle as pico_draw_circle,
     draw_line as pico_draw_line,
@@ -90,6 +91,16 @@ MOMENTUM_FLASH_TIME = 0.18
 # 피격으로 0이 될 때 칸 조각이 튀어 흩어지는 시간. 잃는 게 눈에 보여야 도박이 성립한다
 MOMENTUM_SHATTER_TIME = 0.55
 MOMENTUM_SHARD_GRAVITY = 260  # 조각 낙하 가속 (플레이어 배율 단위/초²)
+
+# 보스 스프라이트(boss_sprite.py) 배치.
+#   몸통 높이(발 ~ 어깨 위, 원본 칸 264px)를 도형 보스와 같은 화면 높이에 맞춘다:
+#   배율 = boss_desired_scale × BOSS_VISIBLE_HEIGHT / 264 (평시 뒷줄 ≈ 340px, 화면의 47%).
+#   단 머리 위로 든 팔(칸 맨 위 0)까지 천장(615) 아래에 들어오도록 배율을 줄인다
+BOSS_SPRITE_BODY_HEIGHT = 264
+BOSS_SPRITE_MAX_LEAN = 12  # 돌진 기울기 상한 (도)
+BOSS_SPRITE_BROKEN_RGB = (118, 118, 128)  # 부서진 팔 — 원래 색에 곱해 생기 빠진 회색으로
+BOSS_SPRITE_DEFEATED_RGB = (80, 82, 92)
+BOSS_SPRITE_FLASH_RGB = (255, 244, 224)  # 피격 순간 흰 번쩍임 (실루엣을 반투명으로 덮는다)
 
 # 부위 파괴 연출
 PART_BREAK_SHAKE = (14, 0.30)  # 팔이 부서지는 순간 화면 흔들림 (px, 초)
@@ -1074,19 +1085,7 @@ def draw_boss_placeholder(
     chains_drawn = {}
 
     def draw_chain(x1, y1, x2, y2):
-        """손목 → 땅. 고리를 가로·세로로 번갈아 놓는다 (매몰선 아래는 클립으로 잘린다)."""
-        length = math.hypot(x2 - x1, y2 - y1)
-        count = max(2, int(length / (CHAIN_LINK_SPACING * scale)))
-        set_draw_rgb(*CHAIN_RGB, 255)
-        draw_thick_line(x1, y1, x2, y2, 2.2 * scale, 2.2 * scale)
-        for index in range(count + 1):
-            t = index / count
-            x, y = x1 + (x2 - x1) * t, y1 + (y2 - y1) * t
-            rx, ry = (4.2, 2.6) if index % 2 else (2.6, 4.2)
-            set_draw_rgb(*CHAIN_RGB, 255)
-            draw_filled_ellipse(x, y, rx * scale, ry * scale, 10)
-            set_draw_rgb(*CHAIN_HIGHLIGHT_RGB, 200)
-            draw_filled_circle(x - 0.8 * scale, y + 0.8 * scale, 1.1 * scale)
+        draw_chain_line(x1, y1, x2, y2, scale)
 
     def draw_arm(side, elbow_x, elbow_y, hand_x, hand_y):
         # 팔은 어깨 높이만큼 밀린 몸통에 붙어 함께 움직인다
@@ -1208,6 +1207,22 @@ def draw_boss_placeholder(
         "core": (lean(center_x, core_y), core_y, 30 * scale),
         "scale": scale,
     }
+
+
+def draw_chain_line(x1, y1, x2, y2, scale):
+    """사슬 한 줄 (pico 좌표). 고리를 가로·세로로 번갈아 놓는다. scale = 고리 크기 배율."""
+    length = math.hypot(x2 - x1, y2 - y1)
+    count = max(2, int(length / (CHAIN_LINK_SPACING * scale)))
+    set_draw_rgb(*CHAIN_RGB, 255)
+    draw_thick_line(x1, y1, x2, y2, 2.2 * scale, 2.2 * scale)
+    for index in range(count + 1):
+        t = index / count
+        x, y = x1 + (x2 - x1) * t, y1 + (y2 - y1) * t
+        rx, ry = (4.2, 2.6) if index % 2 else (2.6, 4.2)
+        set_draw_rgb(*CHAIN_RGB, 255)
+        draw_filled_ellipse(x, y, rx * scale, ry * scale, 10)
+        set_draw_rgb(*CHAIN_HIGHLIGHT_RGB, 200)
+        draw_filled_circle(x - 0.8 * scale, y + 0.8 * scale, 1.1 * scale)
 
 
 def draw_player_placeholder(screen_x, foot_y, scale):
@@ -1365,6 +1380,7 @@ class ArenaScene:
     def enter(self):
         # 스프라이트를 전투 시작 때 미리 읽는다. 첫 프레임에 읽으면 약 75ms 끊긴다
         player_sprite.is_available(PLAYER_RIM_RGBA[:3])
+        boss_sprite.is_available()
 
     def exit(self):
         pass
@@ -2081,7 +2097,12 @@ class ArenaScene:
             self.boss.current_lean_x * logical_pixels(boss_depth) * BOSS_LEAN_DRAW_RATIO
         )
         # 반환값: 두 눈 사이(유도탄 발사 지점), 팔·핵·사슬의 화면 좌표
-        self.boss_geometry = draw_boss_placeholder(
+        if boss_sprite.is_available():
+            self.boss_geometry = self.draw_boss_sprite(
+                boss_screen_x, boss_foot_y, boss_lean_px, head_lift, eye_glow
+            )
+        else:
+            self.boss_geometry = draw_boss_placeholder(
             self.boss_awaken_visual(),
             self.boss_hit_timer > 0,
             self.boss_defeated,
@@ -2094,7 +2115,7 @@ class ArenaScene:
             head_lift,
             eye_glow,
             broken_sides,
-        )
+            )
         self.boss_eye_screen = self.boss_geometry["eye"]
         self.draw_aim_marker()
 
@@ -2529,6 +2550,93 @@ class ArenaScene:
         set_draw_color("accent_light")
         draw_filled_circle(projectile_x, projectile_y, (8 + 12 * progress) * view_zoom)
 
+    def boss_state_progress(self):
+        """보스 현재 상태 안의 진행도 0~1 (스프라이트 포즈용)."""
+        boss = self.boss
+        if boss.current_pattern is None:
+            return 0.0
+        pattern = PATTERNS[boss.current_pattern]
+        if boss.state == "telegraph":
+            return min(boss.telegraph_elapsed / max(boss.current_telegraph, 1e-6), 1.0)
+        if boss.state == "active":
+            return min(boss.attack_elapsed / pattern["duration"], 1.0)
+        if boss.state == "recovery":
+            return 1.0 - min(boss.timer / pattern["recovery"], 1.0)
+        return 0.0
+
+    def draw_boss_sprite(self, center_x, burial_y, lean_px, head_lift, eye_glow):
+        """스프라이트 보스. 발(몸통 아래 가운데)을 단상 윗면(burial_y)에 세운다.
+
+        반환하는 좌표는 도형 보스와 같은 꼴(pico 좌표) + "layout"(조준 발광에 쓴다).
+        """
+        broken = {name for name in ("arm_l", "arm_r") if self.boss.part_broken(name)}
+        pose = boss_sprite.compute_pose(
+            self.boss.current_pattern,
+            self.boss.state,
+            self.boss_state_progress(),
+            self.battle_elapsed,  # 대기 숨쉬기 시계 (전투 시간)
+            broken,
+            head_lift,
+        )
+        foot_x, foot_y = boss_sprite.foot()
+        desired = (
+            boss_desired_scale(self.boss_awaken_visual(), self.boss.forward_progress)
+            * BOSS_VISIBLE_HEIGHT / BOSS_SPRITE_BODY_HEIGHT * view_zoom
+        )
+        # 칸 맨 위(머리 위로 든 팔)까지 천장 아래에 들어오게
+        ceiling = (zoom_y(BOSS_CEILING_Y) - burial_y) / foot_y
+        scale = min(desired, ceiling)
+        # 돌진 조준: 몸 전체를 발 둘레로 기울인다. 다리까지 같이 돌아가므로 도형 보스(상체만)보다
+        #   약하게 — 절반 각도, 최대 12°. 그 이상이면 한쪽 발이 단상에서 들려 보인다
+        lean_angle = math.degrees(math.atan2(lean_px, BOSS_SPRITE_BODY_HEIGHT * scale * 2.0))
+        lean_angle = max(-BOSS_SPRITE_MAX_LEAN, min(lean_angle, BOSS_SPRITE_MAX_LEAN))
+        foot_screen = (center_x + DRAW_OFFSET_X, HEIGHT - (burial_y + DRAW_OFFSET_Y))
+        layout = boss_sprite.Layout(pose, foot_screen, scale, lean_angle)
+
+        def pico(point):
+            return point[0] - DRAW_OFFSET_X, HEIGHT - point[1] - DRAW_OFFSET_Y
+
+        # 발밑 그림자
+        set_draw_color("shadow")
+        draw_filled_ellipse(center_x, burial_y, 150 * scale, 12 * scale)
+
+        tint = BOSS_SPRITE_DEFEATED_RGB if self.boss_defeated else None
+        flash = self.boss_hit_timer > 0
+        layout.draw("body", color=tint)
+        if flash:
+            layout.draw("body", "silhouette", BOSS_SPRITE_FLASH_RGB, 170)
+        core = pico(layout.core())
+        if eye_glow > 0:
+            # 유도탄: 가슴의 붉은 핵이 밝아진다 (구체가 여기서 나간다)
+            draw_radial_glow(*core, (20 + 40 * eye_glow) * scale, (18 + 34 * eye_glow) * scale,
+                             (255, 120 + round(80 * eye_glow), 110), round(110 + 130 * eye_glow))
+
+        chains = {}
+        arms = {}
+        for side, name in ((-1, "arm_l"), (1, "arm_r")):
+            points = [pico(p) for p in layout.box_points(name)]
+            arms[side] = points
+            if name in broken:
+                layout.draw(name, color=BOSS_SPRITE_BROKEN_RGB)
+                continue
+            # 사슬: 팔 가운데에서 그 아래 땅으로 — 떠 있는 팔이 대좌에 묶여 있다
+            start = pico(layout.center(name))
+            anchor = pico(layout.chain_anchor(name))
+            draw_chain_line(*start, *anchor, scale * 1.4)
+            chains[side] = (start, anchor)
+            layout.draw(name, color=tint)
+            if flash:
+                layout.draw(name, "silhouette", BOSS_SPRITE_FLASH_RGB, 170)
+        return {
+            "eye": core,
+            "core": (core[0], core[1], 34 * scale),
+            "arms": {},
+            "arm_boxes": arms,
+            "chains": chains,
+            "layout": layout,
+            "scale": scale,
+        }
+
     def draw_aim_marker(self):
         """지금 공격하면 맞을 부위에 윤곽·발광, 팔이면 위에 내구도 칸. 사거리 밖이면 없음."""
         geometry = self.boss_geometry
@@ -2536,6 +2644,9 @@ class ArenaScene:
             return
         scale = geometry["scale"]
         aimed = self.aimed_part()
+        if "layout" in geometry:
+            self.draw_aim_marker_sprite(geometry, aimed)
+            return
         if aimed == "core":
             x, y, radius = geometry["core"]
             draw_radial_glow(x, y, radius * 1.6, radius * 1.2, AIM_RGB, 120)
@@ -2563,6 +2674,32 @@ class ArenaScene:
                 draw_radial_glow(*hand, 22 * scale, 22 * scale, AIM_RGB, 120)
             if aimed == name or damaged:
                 self.draw_part_bar(name, shoulder, side, bright=aimed == name)
+
+    def draw_aim_marker_sprite(self, geometry, aimed):
+        """스프라이트 보스용 조준 표시: 조준한 팔 실루엣을 파랗게 덮고, 핵이면 고리."""
+        layout = geometry["layout"]
+        if aimed == "core":
+            x, y, radius = geometry["core"]
+            draw_radial_glow(x, y, radius * 1.6, radius * 1.3, AIM_RGB, 120)
+            set_draw_rgb(*AIM_RGB, 230)
+            draw_polyline(
+                [
+                    (x + math.cos(a) * radius, y + math.sin(a) * radius)
+                    for a in (i * math.tau / 28 for i in range(28))
+                ]
+            )
+        for side, name in ((-1, "arm_l"), (1, "arm_r")):
+            if self.boss.part_broken(name):
+                continue
+            points = geometry["arm_boxes"][side]
+            top = max(y for _, y in points)
+            center_x = sum(x for x, _ in points) / 4
+            durability = self.boss.part_durability[name]
+            damaged = durability < dict((n, d) for n, _, _, d in BOSS_PARTS)[name]
+            if aimed == name:
+                layout.draw(name, "silhouette", AIM_RGB, 110)
+            if aimed == name or damaged:
+                self.draw_part_bar(name, (center_x, top - 14 * view_zoom), 0, bright=aimed == name)
 
     def draw_part_bar(self, name, shoulder, side, bright):
         """팔 내구도 8칸 — 어깨 위. 조준 중이면 밝게, 아니면(깎인 팔) 흐리게."""

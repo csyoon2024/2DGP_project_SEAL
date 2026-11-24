@@ -201,6 +201,11 @@ def _load_sheet(path, rim_rgb):
     }
 
 
+# 다른 스프라이트(보스)도 같은 방식으로 읽는다
+def load_sheet(path, rim_rgb):
+    return _load_sheet(path, rim_rgb)
+
+
 def is_available(rim_rgb):
     """두 시트를 (처음 한 번) 읽는다. 대기 시트가 없으면 False — 도형 캐릭터로 대신 그린다."""
     global _sheets
