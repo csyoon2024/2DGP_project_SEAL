@@ -34,8 +34,16 @@ REFERENCE_FRAME = 0  # 회전으로 포즈를 만들 때 쓰는 팔 모양 (대�
 
 # 팔 회전 기준점 = 팔 윗끝(어깨 쪽 뾰족한 끝). 대기 프레임 경계 상자 위 가운데에서 조금 아래
 ARM_PIVOT_DROP = 14
+ARM_ATTACH_X_L = 52  # 왼팔을 오른쪽(몸 쪽)으로
+ARM_ATTACH_X_R = -40  # 오른팔을 왼쪽(몸 쪽)으로
+ARM_ATTACH_Y = 22  # 팔 윗끝을 어깨 높이로
 # 사슬이 묶이는 땅 위치 (발 기준 좌우 거리, 칸 px) — 대기 자세 팔 바로 아래
 CHAIN_ANCHOR_SPREAD = 200
+# 팔을 몸통 어깨에 붙이는 이동량 (칸 px). 원본은 팔이 몸통과 떨어져 떠 있다
+#   (대기 프레임 기준 왼팔 ~ 몸통 틈 43px, 오른팔 29px). 틈을 메우고 어깨 갑옷에 조금 겹치게
+#   안쪽으로 당기고, 팔 윗끝이 어깨 높이에 오도록 아래로 내린다. 모든 포즈에 똑같이 더해져
+#   팔 동작(들기·휘두르기)은 어깨를 기준으로 그대로 움직인다
+ARM_ATTACH_OFFSET = {"arm_l": (ARM_ATTACH_X_L, ARM_ATTACH_Y), "arm_r": (ARM_ATTACH_X_R, ARM_ATTACH_Y)}
 
 _state = None
 
@@ -173,9 +181,10 @@ def compute_pose(pattern, state, t, idle_time, broken, lift=0.0):
                 arm(name, sign * 16 * lift, 0, -18 * lift)
 
     for name in broken:
-        # 부서진 팔: 대기 모양으로 바깥쪽으로 기울어 아래로 처진 채 남는다
+        # 부서진 팔: 어깨에 붙은 채 바깥으로 조금 기울어 살짝 처진다
+        #   (예전 46px 처짐은 팔 윗끝이 어깨에서 떨어져 보였다)
         sign = 1 if name == "arm_l" else -1
-        pose[name] = [REFERENCE_FRAME, sign * 28.0, -sign * 6.0, 46.0]
+        pose[name] = [REFERENCE_FRAME, sign * 16.0, 0.0, 10.0]
     return pose
 
 
@@ -210,7 +219,8 @@ class Layout:
         fx, fy = _state["foot"]
         # 1) 레이어 자체 회전(기준점 둘레) 2) 이동 3) 몸 전체 기울기(발 둘레) 4) 배율
         lx, ly = _rotate(x - px, y - py, angle)
-        cx, cy = px + dx + lx - fx, py + dy + ly - fy
+        ax, ay = ARM_ATTACH_OFFSET.get(name, (0.0, 0.0))
+        cx, cy = px + dx + ax + lx - fx, py + dy + ay + ly - fy
         gx, gy = _rotate(cx, cy, self.global_angle)
         return self.foot_screen[0] + gx * self.scale, self.foot_screen[1] + gy * self.scale
 
@@ -257,5 +267,6 @@ class Layout:
     def chain_anchor(self, name):
         fx, fy = _state["foot"]
         sign = -1 if name == "arm_l" else 1
-        gx, gy = _rotate(sign * CHAIN_ANCHOR_SPREAD, 0, self.global_angle)
+        ax, _ = ARM_ATTACH_OFFSET[name]
+        gx, gy = _rotate(sign * CHAIN_ANCHOR_SPREAD + ax, 0, self.global_angle)
         return self.foot_screen[0] + gx * self.scale, self.foot_screen[1] + gy * self.scale
