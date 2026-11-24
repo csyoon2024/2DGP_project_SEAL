@@ -1608,11 +1608,11 @@ class ArenaScene:
         return attack_left <= boss_right and attack_right >= boss_left
 
     def attack_target_part(self):
-        """플레이어 논리 x로 정한 맞을 부위. 이미 부서진 팔 구역은 핵으로 친다."""
-        part = part_at(self.player_logical_x)
-        if self.boss.part_broken(part):
-            return "core"
-        return part
+        """플레이어 논리 x로 정한 맞을 부위. 핵(몸통)은 정면 구역에서만, 좌우는 항상 팔이다.
+
+        팔이 부서져도 그 구역은 핵이 되지 않는다 — 부서진 팔에 맞으면 아무 일도 없다.
+        """
+        return part_at(self.player_logical_x)
 
     def aimed_part(self):
         """조준 표시용 — 앞줄에서 공격이 닿는 거리일 때만 부위 이름, 아니면 None."""
@@ -1629,6 +1629,7 @@ class ArenaScene:
             # 획득량은 적중 전 기세로 정한다
             self.seal_gauge.player_attack_hit(self.attack_type, self.momentum)
         elif self.boss.damage_part(part, PART_DAMAGE[self.attack_type]):
+            # 부서진 팔이면 damage_part가 아무것도 안 하고 False — 게이지도 내구도도 그대로
             self.on_part_broken(part)
         return part
 
