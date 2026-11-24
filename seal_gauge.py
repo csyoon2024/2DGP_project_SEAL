@@ -75,6 +75,13 @@ class SealGauge:
         self.value = max(0.0, self.value - self.attack_gain(attack_type, momentum))
         self._update_awakened_state()
 
+    def push_toward_player(self, amount):
+        """일회성 보상(부위 파괴 등). 공격과 같은 척도라 GAUGE_CHANGE_SCALE이 곱해진다."""
+        if self.player_won:
+            return
+        self.value = max(0.0, self.value - amount * self.GAUGE_CHANGE_SCALE)
+        self._update_awakened_state()
+
     def player_hit(self, loss=None):
         if self.player_won:
             return

@@ -54,6 +54,46 @@ def telegraph_duration(pattern, phase):
     """페이즈 배율과 하한을 적용한 예고 시간. 패턴 시작 시 한 번만 계산한다."""
     scale = PHASE_MODIFIERS[phase]["telegraph_scale"]
     return max(MIN_TELEGRAPH, PATTERNS[pattern]["telegraph"] * scale)
+# ---------------------------------------------------------------------------
+# 부위 파괴. 공격이 적중한 순간 플레이어의 논리 x가 어느 구역인지로 맞은 부위를 정한다.
+# 공격 가능 범위는 보스 중심 450 ± 155 = 295~605 (BASIC_ATTACK_REACH 120 + 보스 반폭 35).
+# 이름은 화면 기준 (보스 기준 좌우는 헷갈린다). 구역은 겹치지 않고, 295~300 / 600~605처럼
+# 구역 밖 끝자락은 가까운 팔로 친다 (part_at).
+#   (이름, 왼쪽 x, 오른쪽 x, 내구도 — None이면 파괴 불가)
+# 내구도 8: 기본 공격(1) 8회 또는 강공격(3) 3회. 그동안 게이지를 못 미는 대가로 적당한 길이
+# ---------------------------------------------------------------------------
+BOSS_PARTS = (
+    ("arm_l", 300, 400, 8),  # 화면 왼쪽 팔
+    ("core", 400, 500, None),  # 핵 — 게이지를 미는 곳
+    ("arm_r", 500, 600, 8),  # 화면 오른쪽 팔
+)
+# 팔에 맞았을 때 깎이는 내구도. 팔에 맞으면 게이지는 밀지 않는다
+PART_DAMAGE = {"basic": 1, "heavy": 3}
+# 팔을 부순 순간의 일회성 보상: 게이지를 플레이어 쪽으로 이만큼 민다 (기본 4 / 강공격 12와 같은 척도.
+#   SealGauge.GAUGE_CHANGE_SCALE이 똑같이 곱해진다)
+PART_BREAK_GAUGE_BONUS = 0.10
+# 패턴을 쓰는 부위. 팔이 부서지면 그 팔을 쓰는 패턴은 그 전투 동안 나오지 않는다.
+#   both_arms: 하나라도 부서지면 사용 불가. body·core: 파괴 불가라 항상 남는다
+PATTERN_PART = {
+    "slam": "arm_r",
+    "backhand": "arm_l",
+    "shockwave": "both_arms",
+    "slam_double": "both_arms",
+    "charge": "body",
+    "homing": "core",
+}
+
+
+def part_at(logical_x):
+    """논리 x가 속한 부위 이름. 구역 밖 끝자락은 가장 가까운 구역으로."""
+    for name, left, right, _ in BOSS_PARTS:
+        if left <= logical_x < right:
+            return name
+    if logical_x < BOSS_PARTS[0][1]:
+        return BOSS_PARTS[0][0]
+    return BOSS_PARTS[-1][0]
+
+
 # 내리찍기 충격이 앞줄에 먼저 닿고 뒷줄에는 이만큼 늦게 닿는다 (초).
 #   보스에서 가까운 앞줄이 먼저 맞아야 내리찍은 충격이 앞으로 퍼져 나오는 것처럼 읽힌다.
 #   0.12: 두 번 터지는 게 눈에 보일 만큼 길고, 내리찍기 실행 시간(0.15)과
@@ -74,14 +114,17 @@ PATTERNS = {
         "pose": "slam",
         "shake": (6, 0.12),
     },
-    # 후려치기 — 한 팔을 수평으로 뻗어 옆에서 쓸어친다. 앞줄 전용.
-    #   판정폭 200: 회피 대시 거리(160)보다 넓게 잡아 좌우 회피보다 뒷줄로 물러나는 쪽을 유도한다
+    # 후려치기 — 왼팔(arm_l)을 수평으로 뻗어 옆에서 쓸어친다. 앞줄 전용. 뒷줄로 물러나야만 피한다.
+    #   판정폭 200 → 440: 200은 플레이어 반폭(25)을 더해도 좌우 125까지만 닿아 회피 대시(160)나
+    #   예고 중 걷기(0.575초 × 320 ≈ 184)로 빠져나갈 수 있었다. 예고 시작과 동시에 회피 + 이어 걷기가
+    #   가장 멀리 가는 방법이고 1페이즈에서 235를 간다 (측정). 440이면 도달 245로 이것도 넘는다.
+    #   회피 무적도 이 패턴에는 적용되지 않는다 (ArenaScene.resolve_boss_attack)
     "backhand": {
         "kind": "front",
         "telegraph": 0.50,
         "duration": 0.20,
         "recovery": 0.60,
-        "hitbox_width": 200,
+        "hitbox_width": 440,
         "hit_times": (0.0,),
         "telegraph_blink": (0.25, 0.15, 0.10),
         "aim": "player_x",
@@ -165,7 +208,56 @@ class BossController:
     def __init__(self):
         self.awakened = False
         self.phase = 1
+        self.reset_parts()
         self.reset_for_phase(1)
+
+    # --- 부위 -----------------------------------------------------------------
+    def reset_parts(self):
+        """부위 내구도는 한 전투 내내 이어진다 (페이즈 전환·사망 재시작에서도 유지)."""
+        self.part_durability = {
+            name: durability
+            for name, _, _, durability in BOSS_PARTS
+            if durability is not None
+        }
+
+    def part_broken(self, name):
+        return name in self.part_durability and self.part_durability[name] <= 0
+
+    def pattern_available(self, pattern):
+        part = PATTERN_PART.get(pattern)
+        if part == "both_arms":
+            return not (self.part_broken("arm_l") or self.part_broken("arm_r"))
+        if part in self.part_durability:
+            return not self.part_broken(part)
+        return True
+
+    def damage_part(self, name, amount):
+        """팔 내구도를 깎는다. 이번에 부서졌으면 True."""
+        if name not in self.part_durability or self.part_broken(name):
+            return False
+        self.part_durability[name] = max(0, self.part_durability[name] - amount)
+        if self.part_durability[name] == 0:
+            self._cancel_unavailable_pattern()
+            return True
+        return False
+
+    def break_part(self, name):
+        """디버그: 즉시 파괴. 이번에 부서졌으면 True."""
+        if name not in self.part_durability or self.part_broken(name):
+            return False
+        return self.damage_part(name, self.part_durability[name])
+
+    def _cancel_unavailable_pattern(self):
+        # 부서진 팔은 이후 어떤 패턴에도 쓰이지 않는다 — 예고·실행 중이던 패턴이면 취소한다
+        if self.current_pattern is None or self.pattern_available(self.current_pattern):
+            return
+        self.state = "rest"
+        self.timer = self.PATTERN_GAP
+        self.previous_pattern = self.current_pattern
+        self.current_pattern = None
+        self.target_lane = None
+        self.target_x = None
+        self.pending_rear_hits = []
 
     def reset_for_phase(self, phase):
         self.state = "rest"
@@ -277,7 +369,13 @@ class BossController:
         return attacks
 
     def _begin_pattern(self, phase, player_lane, player_x, rng, forced_pattern):
-        weights = PHASE_PATTERNS[phase]
+        # 부서진 팔이 쓰던 패턴은 뺀다. 남은 가중치는 상대 비율 그대로 다시 나뉜다
+        #   (rng.choices는 가중치 합으로 나눠 뽑으므로 재정규화가 자동이다)
+        weights = {
+            name: weight
+            for name, weight in PHASE_PATTERNS[phase].items()
+            if self.pattern_available(name)
+        }
         if forced_pattern in weights:
             pattern = forced_pattern
         else:

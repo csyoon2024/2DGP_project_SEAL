@@ -13,7 +13,17 @@ from pico2d import (
     draw_line as pico_draw_line,
     draw_rectangle as pico_draw_rectangle,
 )
-from boss import BossAttack, BossController, PATTERNS, PHASE_PATTERNS, PHASE_MODIFIERS
+from boss import (
+    BOSS_PARTS,
+    PART_BREAK_GAUGE_BONUS,
+    PART_DAMAGE,
+    PHASE_MODIFIERS,
+    PHASE_PATTERNS,
+    PATTERNS,
+    BossAttack,
+    BossController,
+    part_at,
+)
 
 
 WIDTH = 1280
@@ -80,6 +90,18 @@ MOMENTUM_FLASH_TIME = 0.18
 # 피격으로 0이 될 때 칸 조각이 튀어 흩어지는 시간. 잃는 게 눈에 보여야 도박이 성립한다
 MOMENTUM_SHATTER_TIME = 0.55
 MOMENTUM_SHARD_GRAVITY = 260  # 조각 낙하 가속 (플레이어 배율 단위/초²)
+
+# 부위 파괴 연출
+PART_BREAK_SHAKE = (14, 0.30)  # 팔이 부서지는 순간 화면 흔들림 (px, 초)
+CHAIN_LINK_SPACING = 9  # 사슬 고리 간격 (보스 배율 단위)
+CHAIN_RGB = (78, 84, 100)  # 사슬 쇠 색 — 검은 실루엣과 역광 모두에서 읽히는 회청색
+CHAIN_HIGHLIGHT_RGB = (150, 160, 182)
+BROKEN_ARM_RGB = (40, 43, 54)  # 부서진 팔 색 — 검은 몸(#0A0C10)보다 밝고 벽보다 어둡다
+CHAIN_SHARD_LIFE = 1.0  # 끊긴 사슬 조각이 흩어져 사라지는 시간 (초)
+CHAIN_SHARD_GRAVITY = 900  # 조각 낙하 가속 (화면 px/초²)
+# 조준 표시 — 지금 공격하면 맞을 부위. 플레이어 강조색으로 윤곽과 발광
+AIM_RGB = (74, 158, 255)
+PART_BAR_CELL = (7, 5, 2)  # 팔 내구도 칸 (폭, 높이, 간격 — 화면 px, 줌 배율 곱함)
 
 # 사망 패널티: 부활할 때 게이지를 보스 쪽으로 이만큼 민다 (게이지는 리셋하지 않고 이어받는다).
 #   이게 없으면 체력 1칸·게이지 열세일 때 일부러 죽어 체력 3칸을 받는 게 이득이 된다.
@@ -954,12 +976,16 @@ def draw_boss_placeholder(
     pose_side=1,
     head_lift=0.0,
     eye_glow=0.0,
+    broken_sides=(),
 ):
     """보스 1 — 땅에 반쯤 묻힌 거상 상반신.
 
     pose_side: 한 팔 포즈(후려치기)에서 휘두르는 팔이 출발하는 쪽 (-1 왼쪽 / 1 오른쪽).
     head_lift(0~1): 머리를 드는 양. eye_glow(0~1): 눈을 밝히는 양 (유도탄 예고·발사).
-    반환: 두 눈 사이 화면 좌표 (유도탄 발사 지점).
+    broken_sides: 부서진 팔 (-1 화면 왼쪽 arm_l / 1 화면 오른쪽 arm_r). 포즈와 상관없이
+      축 늘어진 채로 그리고 사슬이 없다. 성한 팔은 손목에서 땅으로 사슬이 묶여 있다.
+    반환: {"eye": 두 눈 사이, "arms": {side: (어깨, 팔꿈치, 손)}, "chains": {side: (손, 땅)},
+           "core": (x, y, 반지름), "scale"} — 유도탄 발사 지점·조준 표시·사슬 파편에 쓴다.
 
     burial_y(매몰선)는 몸통이 땅에서 나오는 높이다. 그 아래(다리·발치 그림자,
     바닥에 박힌 손)는 클립해서 그리지 않는다.
@@ -1044,23 +1070,72 @@ def draw_boss_placeholder(
         )
 
     shoulder_y = body_top - 12 * scale
+    arms_drawn = {}
+    chains_drawn = {}
+
+    def draw_chain(x1, y1, x2, y2):
+        """손목 → 땅. 고리를 가로·세로로 번갈아 놓는다 (매몰선 아래는 클립으로 잘린다)."""
+        length = math.hypot(x2 - x1, y2 - y1)
+        count = max(2, int(length / (CHAIN_LINK_SPACING * scale)))
+        set_draw_rgb(*CHAIN_RGB, 255)
+        draw_thick_line(x1, y1, x2, y2, 2.2 * scale, 2.2 * scale)
+        for index in range(count + 1):
+            t = index / count
+            x, y = x1 + (x2 - x1) * t, y1 + (y2 - y1) * t
+            rx, ry = (4.2, 2.6) if index % 2 else (2.6, 4.2)
+            set_draw_rgb(*CHAIN_RGB, 255)
+            draw_filled_ellipse(x, y, rx * scale, ry * scale, 10)
+            set_draw_rgb(*CHAIN_HIGHLIGHT_RGB, 200)
+            draw_filled_circle(x - 0.8 * scale, y + 0.8 * scale, 1.1 * scale)
 
     def draw_arm(side, elbow_x, elbow_y, hand_x, hand_y):
         # 팔은 어깨 높이만큼 밀린 몸통에 붙어 함께 움직인다
+        broken = side in broken_sides
+        if broken:
+            # 부서진 팔: 포즈와 상관없이 어깨에서 몸 바깥쪽으로 축 늘어진다.
+            #   몸통(반폭 42) 안으로 늘어뜨리면 검은 몸에 묻혀 안 보여서 바깥으로 뺐다
+            elbow_x, elbow_y = 66, foot_y + 96 * scale
+            hand_x, hand_y = 74, foot_y + 54 * scale
         arm_shift = lean(center_x, shoulder_y) - center_x
         shoulder_x = center_x + side * body_half_width + arm_shift
         elbow_screen_x = center_x + side * elbow_x * scale + arm_shift
         hand_screen_x = center_x + side * hand_x * scale + arm_shift
+        if broken:
+            # 생기 빠진 회색 — 성한 팔(검은 실루엣)과 한눈에 구분된다
+            set_draw_rgb(*BROKEN_ARM_RGB, 255)
+        else:
+            set_boss_color("actor_dark")
         draw_thick_line(shoulder_x, shoulder_y, elbow_screen_x, elbow_y, 16 * scale, 13 * scale)
         draw_filled_circle(elbow_screen_x, elbow_y, 6.5 * scale)
         draw_thick_line(elbow_screen_x, elbow_y, hand_screen_x, hand_y, 13 * scale, 11 * scale)
         draw_filled_circle(hand_screen_x, hand_y, 11 * scale)
+        arms_drawn[side] = (
+            (shoulder_x, shoulder_y),
+            (elbow_screen_x, elbow_y),
+            (hand_screen_x, hand_y),
+        )
+        if broken:
+            # 금 간 자국과 손목에 남은 끊긴 쇠고리
+            set_draw_rgb(96, 104, 122, 210)
+            draw_line(shoulder_x - side * 3 * scale, shoulder_y - 6 * scale,
+                      elbow_screen_x + side * 2 * scale, elbow_y + 9 * scale)
+            draw_line(elbow_screen_x - side * 4 * scale, elbow_y - 5 * scale,
+                      elbow_screen_x + side * 3 * scale, elbow_y - 15 * scale)
+            set_draw_rgb(*CHAIN_RGB, 255)
+            draw_filled_ellipse(hand_screen_x, hand_y - 9 * scale, 4.2 * scale, 2.6 * scale, 10)
+        else:
+            # 사슬: 손목에서 몸 옆 땅으로. 보스가 대좌에 결박돼 있다는 설정을 보여 준다
+            anchor = (center_x + side * 70 * scale, burial_y - 4 * scale)
+            draw_chain(hand_screen_x, hand_y - 8 * scale, *anchor)
+            chains_drawn[side] = ((hand_screen_x, hand_y - 8 * scale), anchor)
+        set_boss_color("actor_dark")
 
     if pose == "slam":
+        # 내려찍기는 화면 오른쪽 팔(arm_r)이 든다 — 부위 파괴 연결(PATTERN_PART)과 맞춘다.
         # 손 원 반지름(11)만큼 천장에서 내린다. 9로 두면 손이 천장 위로 2×scale 삐져나온다
         hand_limit = ceiling_y - 11 * scale
-        draw_arm(-1, 58, min(foot_y + 177 * scale, hand_limit - 9 * scale), 64, min(foot_y + 220 * scale, hand_limit))
-        draw_arm(1, 58, foot_y + 105 * scale, 75, foot_y + 78 * scale)
+        draw_arm(1, 58, min(foot_y + 177 * scale, hand_limit - 9 * scale), 64, min(foot_y + 220 * scale, hand_limit))
+        draw_arm(-1, 58, foot_y + 105 * scale, 75, foot_y + 78 * scale)
     elif pose == "slam_double":
         # 손 원 반지름(11)만큼 천장에서 내린다. 9로 두면 손이 천장 위로 2×scale 삐져나온다
         hand_limit = ceiling_y - 11 * scale
@@ -1086,7 +1161,11 @@ def draw_boss_placeholder(
         # 후려치기 실행: 같은 팔이 몸 앞을 가로질러 반대쪽 낮은 곳까지 쓸고 지나간다
         draw_arm(pose_side, 30, foot_y + 118 * scale, -96, foot_y + 96 * scale)
         draw_arm(-pose_side, 56, foot_y + 108 * scale, 78, foot_y + 82 * scale)
-    elif pose in ("slam_impact", "shockwave_impact"):
+    elif pose == "slam_impact":
+        # 내려찍기 착탄: 오른팔만 내리꽂는다
+        draw_arm(1, 68, foot_y + 76 * scale, 90, foot_y + 12 * scale)
+        draw_arm(-1, 56, foot_y + 108 * scale, 78, foot_y + 82 * scale)
+    elif pose in ("double_impact", "shockwave_impact"):
         draw_arm(-1, 68, foot_y + 76 * scale, 90, foot_y + 12 * scale)
         draw_arm(1, 68, foot_y + 76 * scale, 90, foot_y + 12 * scale)
     else:
@@ -1121,7 +1200,14 @@ def draw_boss_placeholder(
     # 매몰선의 흙더미 — 잘린 단면 대신 몸이 땅에 박혀 있는 것처럼 보이게
     set_boss_color("shadow")
     draw_filled_ellipse(center_x, burial_y, BOSS_MOUND_HALF_WIDTH * scale, 9 * scale)
-    return head_x, head_y
+    core_y = body_top - 41 * scale  # 가슴의 붉은 두 줄 사이 = 핵
+    return {
+        "eye": (head_x, head_y),
+        "arms": arms_drawn,
+        "chains": chains_drawn,
+        "core": (lean(center_x, core_y), core_y, 30 * scale),
+        "scale": scale,
+    }
 
 
 def draw_player_placeholder(screen_x, foot_y, scale):
@@ -1272,6 +1358,9 @@ class ArenaScene:
         self.boss_awaken_blend = 0.0
         # 보스 두 눈 사이 화면 좌표 (보스를 그릴 때 갱신). 유도탄 발사 지점
         self.boss_eye_screen = (VANISHING_X, HEIGHT / 2)
+        # 보스를 그릴 때 갱신하는 부위 화면 좌표 (조준 표시·사슬 파편용, 그리기 전용)
+        self.boss_geometry = None
+        self.chain_shards = []
 
     def enter(self):
         # 스프라이트를 전투 시작 때 미리 읽는다. 첫 프레임에 읽으면 약 75ms 끊긴다
@@ -1314,6 +1403,11 @@ class ArenaScene:
                 self.debug_forced_pattern = available_patterns[
                     pattern_index % len(available_patterns)
                 ]
+            elif event.key in (pico2d.SDLK_F8, pico2d.SDLK_F9):
+                # 디버그: 팔 즉시 파괴 (F8 화면 왼쪽 팔, F9 화면 오른쪽 팔)
+                part = "arm_l" if event.key == pico2d.SDLK_F8 else "arm_r"
+                if self.boss.break_part(part):
+                    self.on_part_broken(part)
             elif event.key == pico2d.SDLK_F7:
                 self.debug_pattern_seed_fixed = not self.debug_pattern_seed_fixed
                 self.debug_pattern_rng = random.Random(
@@ -1381,6 +1475,8 @@ class ArenaScene:
         self.game_end_elapsed = 0.0
         self.quit_requested = False
         self.boss.reset_for_phase(1)
+        self.boss.reset_parts()
+        self.chain_shards = []
         self.boss.set_awakened(False)
 
     def boss_should_awaken(self):
@@ -1388,8 +1484,11 @@ class ArenaScene:
         # 각성이 풀렸다. 1페이즈는 그대로 게이지로 판정한다 (85%에서 각성, 60%에서 해제)
         return self.boss_phase >= 2 or self.seal_gauge.boss_awakened
 
-    def receive_player_hit(self):
-        if self.debug_invulnerability_enabled or self.invulnerability_timer > 0:
+    def receive_player_hit(self, ignore_dodge=False):
+        # ignore_dodge: 회피 무적을 무시하는 공격 (후려치기)
+        if self.debug_invulnerability_enabled:
+            return False
+        if self.invulnerability_timer > 0 and not ignore_dodge:
             return False
         if self.player_health <= 0:
             return False
@@ -1493,7 +1592,10 @@ class ArenaScene:
     def resolve_attack_hit(self):
         if self.player_lane != "platform_1":
             return False
+        return self.attack_reaches_boss()
 
+    def attack_reaches_boss(self):
+        """지금 바라보는 쪽으로 공격하면 보스 판정에 닿는가 (레인 무관)."""
         if self.facing_direction > 0:
             attack_left = self.player_logical_x
             attack_right = self.player_logical_x + BASIC_ATTACK_REACH
@@ -1504,6 +1606,57 @@ class ArenaScene:
         boss_left = self.boss.position_x - BOSS_HITBOX_HALF_WIDTH
         boss_right = self.boss.position_x + BOSS_HITBOX_HALF_WIDTH
         return attack_left <= boss_right and attack_right >= boss_left
+
+    def attack_target_part(self):
+        """플레이어 논리 x로 정한 맞을 부위. 이미 부서진 팔 구역은 핵으로 친다."""
+        part = part_at(self.player_logical_x)
+        if self.boss.part_broken(part):
+            return "core"
+        return part
+
+    def aimed_part(self):
+        """조준 표시용 — 앞줄에서 공격이 닿는 거리일 때만 부위 이름, 아니면 None."""
+        if self.player_lane != "platform_1" or self.lane_transition_target is not None:
+            return None
+        if self.boss_defeated or not self.attack_reaches_boss():
+            return None
+        return self.attack_target_part()
+
+    def strike_boss(self):
+        """공격 적중 처리. 핵이면 게이지, 팔이면 내구도 (게이지는 안 민다)."""
+        part = self.attack_target_part()
+        if part == "core":
+            # 획득량은 적중 전 기세로 정한다
+            self.seal_gauge.player_attack_hit(self.attack_type, self.momentum)
+        elif self.boss.damage_part(part, PART_DAMAGE[self.attack_type]):
+            self.on_part_broken(part)
+        return part
+
+    def on_part_broken(self, part):
+        """팔이 부서진 순간: 게이지 보상, 강한 흔들림, 사슬이 끊겨 흩어진다."""
+        self.seal_gauge.push_toward_player(PART_BREAK_GAUGE_BONUS)
+        self.trigger_screen_shake(*PART_BREAK_SHAKE)
+        side = -1 if part == "arm_l" else 1
+        chain = (self.boss_geometry or {}).get("chains", {}).get(side)
+        if chain is None:
+            return
+        (x1, y1), (x2, y2) = chain
+        self.trigger_impact_flash(x1, y1)
+        for index in range(16):
+            t = index / 15
+            self.chain_shards.append(
+                {
+                    "x": x1 + (x2 - x1) * t,
+                    "y": y1 + (y2 - y1) * t,
+                    # 끊긴 자리(손목)에서 멀어지는 쪽 + 바깥으로 튄다
+                    "vx": side * self.fx_rng.uniform(60, 260),
+                    "vy": self.fx_rng.uniform(80, 360) * (1.0 - 0.6 * t),
+                    "angle": self.fx_rng.uniform(0, math.tau),
+                    "spin": self.fx_rng.uniform(-16, 16),
+                    "life": CHAIN_SHARD_LIFE * self.fx_rng.uniform(0.7, 1.0),
+                    "size": self.fx_rng.uniform(3.5, 5.5),
+                }
+            )
 
     def update_camera(self, fixed_delta):
         """레인별 카메라 줌 보간. 게임플레이에는 영향이 없다 (그리기 전용 상태)."""
@@ -1615,7 +1768,21 @@ class ArenaScene:
             if player_sprite.brake_frame(self.player_anim_time) is None:
                 self.set_player_animation("idle")
 
+    def update_chain_shards(self, fixed_delta):
+        alive = []
+        for shard in self.chain_shards:
+            shard["life"] -= fixed_delta
+            if shard["life"] <= 0:
+                continue
+            shard["vy"] -= CHAIN_SHARD_GRAVITY * fixed_delta
+            shard["x"] += shard["vx"] * fixed_delta
+            shard["y"] += shard["vy"] * fixed_delta
+            shard["angle"] += shard["spin"] * fixed_delta
+            alive.append(shard)
+        self.chain_shards = alive
+
     def update_momentum_fx(self, fixed_delta):
+        self.update_chain_shards(fixed_delta)
         self.player_anim_time += fixed_delta
         self.momentum_flash_timer = max(0.0, self.momentum_flash_timer - fixed_delta)
         alive = []
@@ -1717,8 +1884,8 @@ class ArenaScene:
                 if self.resolve_attack_hit():
                     self.successful_hits += 1
                     self.boss_hit_timer = 0.06
-                    # 획득량은 적중 전 기세로 정하고, 앞줄 적중이면 그다음에 기세 +1
-                    self.seal_gauge.player_attack_hit(self.attack_type, self.momentum)
+                    # 핵이면 게이지(적중 전 기세로), 팔이면 내구도. 앞줄 적중이면 그다음에 기세 +1
+                    self.strike_boss()
                     if self.player_lane == "platform_1":
                         self.gain_momentum()
                     self.recover_health_from_pushback()
@@ -1827,7 +1994,11 @@ class ArenaScene:
         self.boss.set_awakened(self.boss_should_awaken())
 
     def resolve_boss_attack(self, attack):
-        if self.debug_invulnerability_enabled or self.invulnerability_timer > 0:
+        if self.debug_invulnerability_enabled:
+            return False
+        # 회피 무적(invulnerability_timer는 회피에서만 걸린다)은 후려치기에 통하지 않는다 —
+        #   좌우 회피가 아니라 뒷줄로 물러나야만 피하는 패턴이다
+        if self.invulnerability_timer > 0 and attack.pattern != "backhand":
             return False
         if self.player_health <= 0:
             return False
@@ -1851,7 +2022,7 @@ class ArenaScene:
             )
 
         if overlaps:
-            return self.receive_player_hit()
+            return self.receive_player_hit(ignore_dodge=attack.pattern == "backhand")
         return False
 
     def draw(self):
@@ -1881,16 +2052,21 @@ class ArenaScene:
         if self.boss.current_pattern is not None:
             boss_pose = PATTERNS[self.boss.current_pattern]["pose"]
             if self.boss.state in ("active", "recovery"):
-                if self.boss.current_pattern in ("slam", "slam_double"):
+                if self.boss.current_pattern == "slam":
                     boss_pose = "slam_impact"
+                elif self.boss.current_pattern == "slam_double":
+                    boss_pose = "double_impact"
                 elif self.boss.current_pattern == "shockwave":
                     boss_pose = "shockwave_impact"
                 elif self.boss.current_pattern == "backhand":
                     boss_pose = "backhand_impact"
-        # 후려치기: 조준 반대쪽에서 팔을 젖혔다가 조준 쪽으로 쓸어친다
-        backhand_side = 1
-        if self.boss.current_pattern == "backhand" and self.boss.target_x is not None:
-            backhand_side = -1 if self.boss.target_x >= self.boss.position_x else 1
+        # 후려치기는 화면 왼쪽 팔(arm_l)이 왼쪽에서 오른쪽으로 쓸어친다 (PATTERN_PART)
+        backhand_side = -1
+        broken_sides = tuple(
+            side
+            for side, name in ((-1, "arm_l"), (1, "arm_r"))
+            if self.boss.part_broken(name)
+        )
         head_lift, eye_glow = self.boss_homing_head()
 
         boss_screen_x, boss_foot_y, boss_depth = boss_anchor(
@@ -1903,8 +2079,8 @@ class ArenaScene:
         boss_lean_px = (
             self.boss.current_lean_x * logical_pixels(boss_depth) * BOSS_LEAN_DRAW_RATIO
         )
-        # 반환값(두 눈 사이)은 유도탄 발사 지점으로 쓴다
-        self.boss_eye_screen = draw_boss_placeholder(
+        # 반환값: 두 눈 사이(유도탄 발사 지점), 팔·핵·사슬의 화면 좌표
+        self.boss_geometry = draw_boss_placeholder(
             self.boss_awaken_visual(),
             self.boss_hit_timer > 0,
             self.boss_defeated,
@@ -1916,7 +2092,10 @@ class ArenaScene:
             backhand_side,
             head_lift,
             eye_glow,
+            broken_sides,
         )
+        self.boss_eye_screen = self.boss_geometry["eye"]
+        self.draw_aim_marker()
 
         draw_lane("platform_1", "front_lane", "front_edge", 8)
         draw_lane("platform_2", "rear_lane", "rear_edge", 10)
@@ -1927,6 +2106,7 @@ class ArenaScene:
         self.draw_homing_projectile()
         self.draw_active_boss_effects()
         self.draw_impact_flash()
+        self.draw_chain_shards()
 
         lane = LANES[self.player_lane]
         player_scale = lane["scale"]
@@ -2167,9 +2347,9 @@ class ArenaScene:
 
     def draw_debug_panel(self):
         set_draw_color("actor_dark")
-        draw_filled_rectangle(20, 338, 430, 700)  # 390 → 338: PHASE MOD·MOMENTUM 두 줄(26px씩) 추가
+        draw_filled_rectangle(20, 312, 430, 700)  # 390 → 312: PHASE MOD·MOMENTUM·PARTS 세 줄(26px씩) 추가
         set_draw_color("rear_edge")
-        draw_rectangle(20, 338, 430, 700)
+        draw_rectangle(20, 312, 430, 700)
 
         if self.debug_font is None:
             font_path = os.path.join(
@@ -2193,6 +2373,7 @@ class ArenaScene:
             f"HITS       {self.successful_hits}",
             f"PHASE      {self.debug_phase}  [F5 jump]",
             f"PHASE MOD  tel x{PHASE_MODIFIERS[self.boss_phase]['telegraph_scale']:.2f}  hit {PHASE_MODIFIERS[self.boss_phase]['hit_loss'] * SealGauge.GAUGE_CHANGE_SCALE:.3f}",
+            f"PARTS      L {self.boss.part_durability['arm_l']}  R {self.boss.part_durability['arm_r']}  aim {self.aimed_part() or '-'}  [F8/F9]",
             f"MOMENTUM   {self.momentum}/{SealGauge.MOMENTUM_MAX}  gain B {self.seal_gauge.attack_gain('basic', self.momentum):.0%} H {self.seal_gauge.attack_gain('heavy', self.momentum):.0%}",
             f"GAUGE      {self.seal_gauge.value:4.0%}  [[ / ] adjust]",
             f"PATTERN    {self.debug_forced_pattern or '-'}  [F6 cycle]",
@@ -2347,6 +2528,75 @@ class ArenaScene:
         set_draw_color("accent_light")
         draw_filled_circle(projectile_x, projectile_y, (8 + 12 * progress) * view_zoom)
 
+    def draw_aim_marker(self):
+        """지금 공격하면 맞을 부위에 윤곽·발광, 팔이면 위에 내구도 칸. 사거리 밖이면 없음."""
+        geometry = self.boss_geometry
+        if geometry is None:
+            return
+        scale = geometry["scale"]
+        aimed = self.aimed_part()
+        if aimed == "core":
+            x, y, radius = geometry["core"]
+            draw_radial_glow(x, y, radius * 1.6, radius * 1.2, AIM_RGB, 120)
+            set_draw_rgb(*AIM_RGB, 230)
+            draw_polyline(
+                [
+                    (x + math.cos(a) * radius, y + math.sin(a) * radius * 0.8)
+                    for a in (i * math.tau / 24 for i in range(24))
+                ]
+            )
+        for side, name in ((-1, "arm_l"), (1, "arm_r")):
+            arm = geometry["arms"].get(side)
+            if arm is None or self.boss.part_broken(name):
+                continue
+            shoulder, elbow, hand = arm
+            durability = self.boss.part_durability[name]
+            damaged = durability < dict((n, d) for n, _, _, d in BOSS_PARTS)[name]
+            if aimed == name:
+                # 팔 윤곽: 팔 위에 반투명 굵은 선 + 밝은 얇은 선
+                set_draw_rgb(*AIM_RGB, 90)
+                draw_thick_line(*shoulder, *elbow, 22 * scale, 18 * scale)
+                draw_thick_line(*elbow, *hand, 18 * scale, 16 * scale)
+                set_draw_rgb(170, 214, 255, 230)
+                draw_polyline((shoulder, elbow, hand), closed=False)
+                draw_radial_glow(*hand, 22 * scale, 22 * scale, AIM_RGB, 120)
+            if aimed == name or damaged:
+                self.draw_part_bar(name, shoulder, side, bright=aimed == name)
+
+    def draw_part_bar(self, name, shoulder, side, bright):
+        """팔 내구도 8칸 — 어깨 위. 조준 중이면 밝게, 아니면(깎인 팔) 흐리게."""
+        total = dict((n, d) for n, _, _, d in BOSS_PARTS)[name]
+        left_now = self.boss.part_durability[name]
+        cell_w, cell_h, gap = (v * view_zoom for v in PART_BAR_CELL)
+        width = total * cell_w + (total - 1) * gap
+        x0 = shoulder[0] + side * 18 * view_zoom - width / 2
+        y0 = shoulder[1] + 22 * view_zoom
+        alpha = 255 if bright else 120
+        for index in range(total):
+            x = x0 + index * (cell_w + gap)
+            if index < left_now:
+                set_draw_rgb(*AIM_RGB, alpha)
+                draw_filled_rectangle(x, y0, x + cell_w, y0 + cell_h)
+            else:
+                set_draw_rgb(10, 12, 16, round(alpha * 0.8))
+                draw_filled_rectangle(x, y0, x + cell_w, y0 + cell_h)
+                set_draw_rgb(*AIM_RGB, round(alpha * 0.4))
+                draw_rectangle(x, y0, x + cell_w, y0 + cell_h)
+
+    def draw_chain_shards(self):
+        for shard in self.chain_shards:
+            t = shard["life"] / CHAIN_SHARD_LIFE
+            size = shard["size"] * view_zoom
+            # 고리 조각: 납작한 마름모
+            points = [
+                (
+                    shard["x"] + math.cos(shard["angle"] + offset) * size * stretch,
+                    shard["y"] + math.sin(shard["angle"] + offset) * size * stretch,
+                )
+                for offset, stretch in ((0.0, 1.0), (1.57, 0.55), (3.14, 1.0), (4.71, 0.55))
+            ]
+            draw_polygon(points, [CHAIN_HIGHLIGHT_RGB + (round(255 * min(1.0, t * 1.5)),)] * 4)
+
     def backhand_range(self):
         """후려치기 판정 범위 (논리 x). resolve_boss_attack과 같은 폭 (+ 플레이어 반폭 25 제외)."""
         hitbox_scale = BossController.AWAKENING_HITBOX_SCALE if self.boss.awakened else 1.0
@@ -2362,7 +2612,7 @@ class ArenaScene:
             pattern = PATTERNS["backhand"]
             progress = min(self.boss.attack_elapsed / pattern["duration"], 1.0)
             left, right = self.backhand_range()
-            from_right = self.boss.target_x is not None and self.boss.target_x < self.boss.position_x
+            from_right = False  # 왼팔(arm_l)이 왼쪽에서 오른쪽으로 쓸어친다
             width = right - left
             head = right - width * progress if from_right else left + width * progress
             tail = right if from_right else left
