@@ -67,6 +67,10 @@ BASIC_ATTACK_DURATION = 0.25
 BASIC_ATTACK_REACH = 120
 HEAVY_ATTACK_DURATION = 0.70
 PLAYER_MAX_HEALTH = 3
+# 테스트용: 보스 공격 속도 배율. 0.2 = 20% — 보스의 시간이 5배 느리게 흐른다
+#   (예고 0.40초 → 2.0초 등, 패턴 사이 공백도 같이). 부위 파괴 등을 천천히 시험하려고 낮췄다.
+#   밸런스 확인 전에 1.0으로 되돌릴 것
+BOSS_TEST_SPEED = 0.2
 # 보스 처치 연출 1.5초: 여운 0.5초(보스가 쓰러진 걸 볼 시간) → 1.0초 페이드 아웃 →
 #   보스 사이 화면(InterludeScene)으로 전환. 예전에는 2.8초 뒤 게임을 닫았다
 GAME_END_LINGER = 0.5
@@ -1945,11 +1949,13 @@ class ArenaScene:
             self.boss.reset_for_phase(phase_jump)
             self.boss.set_awakened(self.boss_should_awaken())
 
+        # 테스트용: 보스 시간만 느리게 흘린다 (예고·실행·후경직·공백이 모두 같은 비율로 길어진다)
+        boss_delta = fixed_delta * BOSS_TEST_SPEED
         forced_pattern = None
-        if self.boss.state == "rest" and self.boss.timer <= fixed_delta:
+        if self.boss.state == "rest" and self.boss.timer <= boss_delta:
             forced_pattern = self.consume_debug_forced_pattern()
         boss_attacks = self.boss.update(
-            fixed_delta,
+            boss_delta,
             self.boss_phase,
             self.player_lane,
             self.player_logical_x,
