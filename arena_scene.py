@@ -1223,6 +1223,56 @@ def draw_boss_placeholder(
     }
 
 
+# ---------------------------------------------------------------------------
+# 예고 표시 — 전투(보스 패턴)와 추격 구간(흘러오는 위협)이 같은 함수를 쓴다. 새로 배울 표시가 없다.
+# visible: 깜빡임 켜짐 여부, progress: 예고 진행도 0~1
+# ---------------------------------------------------------------------------
+def draw_lane_marker(lane_name, visible):
+    """레인 전체 (충격파)."""
+    quad = lane_quad(lane_name)
+    set_draw_color("accent", 90 if visible else 0)
+    draw_polygon(quad)
+    set_draw_color("accent_light")
+    draw_polyline(quad)
+
+
+def draw_range_marker(lane_name, left, right, visible):
+    """레인 한 구간 (후려치기)."""
+    quad = lane_quad(lane_name, left, right)
+    set_draw_color("accent", 90 if visible else 0)
+    draw_polygon(quad)
+    set_draw_color("accent_light", 255 if visible else 45)
+    draw_polyline(quad)
+
+
+def draw_column_marker(left, right, visible):
+    """두 레인을 꿰뚫는 기둥 (돌진)."""
+    for lane_name in ("platform_1", "platform_2"):
+        draw_range_marker(lane_name, left, right, visible)
+
+
+def draw_spot_marker(lane_name, target_x, visible, progress):
+    """한 점 (내려찍기) — 줄어드는 타원 그림자."""
+    target_lane = LANES[lane_name]
+    scale = logical_pixels(target_lane["scale"])
+    screen_x, screen_y = lane_point(lane_name, target_x)
+    growth = 1.0 - 0.5 * progress
+    set_draw_color("accent", int(60 + 140 * progress) if visible else 60)
+    draw_filled_ellipse(
+        screen_x,
+        screen_y,
+        80 * growth * scale,
+        18 * growth * target_lane["scale"] * view_zoom,
+    )
+    set_draw_color("accent_light", 255 if visible else 45)
+    draw_rectangle(
+        screen_x - 2,
+        screen_y - 3,
+        screen_x + 2,
+        screen_y + 3,
+    )
+
+
 def draw_chain_line(x1, y1, x2, y2, scale):
     """사슬 한 줄 (pico 좌표). 고리를 가로·세로로 번갈아 놓는다. scale = 고리 크기 배율."""
     length = math.hypot(x2 - x1, y2 - y1)
@@ -1441,6 +1491,9 @@ class ArenaScene:
                 armor_stage = self.boss.armor_intact()
                 for broken in self.boss.break_part(part):
                     self.on_part_broken(broken, armor_stage)
+            elif event.key == pico2d.SDLK_F11:
+                # 디버그: 지금 구간을 끝낸다 (전투 → 추격 구간, 추격 → 성공)
+                self.debug_skip()
             elif event.key == pico2d.SDLK_F10:
                 # 디버그: 보스 1 ↔ 2 바꿔 처음부터
                 self.switch_boss(2 if self.boss_id == 1 else 1)
@@ -1483,6 +1536,10 @@ class ArenaScene:
         if target_lane == "platform_2":
             # 뒷줄로 물러서면 기세 -1. 전환을 시작한 순간 깎아 결정의 대가가 바로 보이게 한다
             self.lose_momentum()
+
+    def debug_skip(self):
+        if not self.battle_finished:
+            self.finish_battle()
 
     def switch_boss(self, boss_id):
         self.boss_id = boss_id
@@ -1561,13 +1618,15 @@ class ArenaScene:
             # 씬 매니저 없이 단독 실행된 경우 — GameFramework가 이 값을 보고 루프를 끝낸다
             self.quit_requested = True
             return
-        from interlude_scene import InterludeScene
+        from chase_scene import ChaseScene
 
         record = self.battle_record()
         self.run_state.record_battle(record)
         self.battle_finished = True  # 한 번만 전환한다
+        # 봉인 직후, 봉인이 깨지기 전에 다음 방으로 달린다 (추격 구간 → 결과·기술 선택 → 다음 보스전).
+        #   체력은 이번 전투에서 남은 만큼 들고 간다 (다음 보스전 시작 때 가득 찬다)
         self.scene_manager.change_scene(
-            InterludeScene(self.scene_manager, self.run_state, record)
+            ChaseScene(self.scene_manager, self.run_state, record, self.player_health)
         )
 
     def recover_health_from_pushback(self):
@@ -1952,10 +2011,7 @@ class ArenaScene:
         self.screen_shake_timer = max(0.0, self.screen_shake_timer - fixed_delta)
         self.impact_flash_timer = max(0.0, self.impact_flash_timer - fixed_delta)
         self.screen_shake_frame += 1
-        # 보스 2 장갑 단계: 게이지를 되밀 방법이 없으므로 누수를 절반으로
-        self.seal_gauge.leak_scale = ARMOR_STAGE_LEAK_SCALE if self.boss.armor_intact() else 1.0
-        self.seal_gauge.update(fixed_delta)
-        self.boss.set_awakened(self.boss_should_awaken())
+        self.update_gauge(fixed_delta)
 
         if attack_locked:
             attack_duration = (
@@ -2007,6 +2063,17 @@ class ArenaScene:
                 self.lane_transition_target = None
                 self.lane_transition_elapsed = 0.0
 
+        self.update_encounter(fixed_delta)
+
+    def update_gauge(self, fixed_delta):
+        """게이지 누수·각성 판정. 추격 구간(ChaseScene)은 게이지가 없어 아무것도 안 한다."""
+        # 보스 2 장갑 단계: 게이지를 되밀 방법이 없으므로 누수를 절반으로
+        self.seal_gauge.leak_scale = ARMOR_STAGE_LEAK_SCALE if self.boss.armor_intact() else 1.0
+        self.seal_gauge.update(fixed_delta)
+        self.boss.set_awakened(self.boss_should_awaken())
+
+    def update_encounter(self, fixed_delta):
+        """보스 패턴·피격·사망·페이즈·승리. 추격 구간은 흘러오는 위협으로 바꿔 끼운다."""
         phase_jump = self.consume_debug_phase_jump()
         if phase_jump is not None:
             self.boss_phase = phase_jump
@@ -2535,33 +2602,18 @@ class ArenaScene:
         marker_alpha = int(60 + 140 * progress) if visible else 60
 
         if pattern["marker"] == "lane":
-            quad = lane_quad(self.boss.target_lane)
-            set_draw_color("accent", fill_alpha)
-            draw_polygon(quad)
-            set_draw_color("accent_light")
-            draw_polyline(quad)
+            draw_lane_marker(self.boss.target_lane, visible)
             return
 
         if pattern["marker"] == "sweep":
             # 후려치기: 앞줄의 판정 범위 전체를 칠한다 (각성 판정 배율 포함 — 실제 판정과 같은 폭)
             left, right = self.backhand_range()
-            quad = lane_quad("platform_1", left, right)
-            set_draw_color("accent", fill_alpha)
-            draw_polygon(quad)
-            set_draw_color("accent_light", 255 if visible else 45)
-            draw_polyline(quad)
+            draw_range_marker("platform_1", left, right, visible)
             return
 
         if pattern["marker"] == "column":
             half_width = pattern["hitbox_width"] * 0.5
-            left = self.boss.target_x - half_width
-            right = self.boss.target_x + half_width
-            for lane_name in ("platform_1", "platform_2"):
-                quad = lane_quad(lane_name, left, right)
-                set_draw_color("accent", fill_alpha)
-                draw_polygon(quad)
-                set_draw_color("accent_light", 255 if visible else 45)
-                draw_polyline(quad)
+            draw_column_marker(self.boss.target_x - half_width, self.boss.target_x + half_width, visible)
             return
 
         targets = [(self.boss.target_lane, self.boss.target_x)]
@@ -2572,24 +2624,7 @@ class ArenaScene:
             targets += [("platform_2", target_x) for _, target_x in list(targets)]
 
         for target_lane_name, target_x in targets:
-            target_lane = LANES[target_lane_name]
-            scale = logical_pixels(target_lane["scale"])
-            screen_x, screen_y = lane_point(target_lane_name, target_x)
-            growth = 1.0 - 0.5 * progress
-            set_draw_color("accent", marker_alpha)
-            draw_filled_ellipse(
-                screen_x,
-                screen_y,
-                80 * growth * scale,
-                18 * growth * target_lane["scale"] * view_zoom,
-            )
-            set_draw_color("accent_light", 255 if visible else 45)
-            draw_rectangle(
-                screen_x - 2,
-                screen_y - 3,
-                screen_x + 2,
-                screen_y + 3,
-            )
+            draw_spot_marker(target_lane_name, target_x, visible, progress)
 
     def boss_homing_head(self):
         """유도탄 예고·발사 중 (머리 드는 양, 눈 밝기) — 0~1. 그리기 전용."""
