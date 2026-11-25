@@ -15,6 +15,7 @@ import random
 import pico2d
 
 import arena_scene as arena
+import boss_sprite
 from arena_scene import (
     HEIGHT,
     LANES,
@@ -57,6 +58,18 @@ CHASE_FLOW_SPACING = 0.09
 CHASE_PILLAR_SPACING = 0.55
 # 뒤에서 번지는 붉은 빛 (깨지는 봉인). 시간이 갈수록 화면 아래에서 차오른다
 CHASE_RED_RGB = (210, 34, 44)
+# 테스트용: 위협의 시간만 이 배율로 흐른다 (0.5 = 예고와 위협 간격이 2배로 길어진다).
+#   추격 길이(20초)는 그대로. 밸런스 확인 전에 1.0으로 되돌릴 것
+CHASE_TEST_SPEED = 0.5
+# 뒤쫓아 오는 보스 — 화면 아래(카메라 쪽, 플레이어 뒤)에 거대한 반투명 실루엣으로 상체만 보인다.
+#   발 위치(pico y)가 시작 → 끝으로 올라오며 점점 다가온다. 예고 표시·플레이어보다 먼저 그려 가리지 않는다
+CHASER_SCALE = 2.2  # 원본 칸 px → 화면 px
+CHASER_FOOT_START = -430  # 처음부터 붉은 핵(발 위 ≈ 440px)이 화면 아래 끝에 보인다
+CHASER_FOOT_END = -330  # 끝날 무렵엔 가슴까지 올라와 바짝 붙는다
+CHASER_RGB = (52, 44, 66)  # 원래 색에 곱해 검보랏빛 그림자로
+CHASER_ALPHA = 165
+CHASER_BOB = (9.0, 6.5)  # 뛰는 들썩임 (px, rad/초)
+CHASER_PARALLAX = 1.25  # 좌우 카메라 이동에 대한 반응 — 플레이어(1.0)보다 가까워 더 크게 흐른다
 
 
 class ChaseScene(ArenaScene):
@@ -127,14 +140,16 @@ class ChaseScene(ArenaScene):
             return
 
         self.chase_elapsed += fixed_delta
-        self.spawn_timer -= fixed_delta
+        # 위협의 시계만 테스트 배율로 (예고·실행·다음 위협까지의 간격이 모두 같은 비율로 길어진다)
+        threat_delta = fixed_delta * CHASE_TEST_SPEED
+        self.spawn_timer -= threat_delta
         if self.spawn_timer <= 1e-9:
             self.spawn_threat()
             self.spawn_timer += self.spawn_interval()
 
         alive = []
         for threat in self.threats:
-            threat["elapsed"] += fixed_delta
+            threat["elapsed"] += threat_delta
             if not threat["landed"] and threat["elapsed"] >= threat["telegraph"]:
                 threat["landed"] = True
                 self.land_threat(threat)
@@ -243,6 +258,7 @@ class ChaseScene(ArenaScene):
         arena.draw_lane("platform_2", "rear_lane", "rear_edge", 10)
         self.draw_floor_flow(flow)
         self.draw_red_light()
+        self.draw_chasing_boss()
         for threat in self.threats:
             if not threat["landed"]:
                 self.draw_threat(threat)
@@ -328,6 +344,37 @@ class ChaseScene(ArenaScene):
         bottom = (r, g, b, round(120 + 80 * progress))
         clear = (r, g, b, 0)
         arena.draw_polygon(((0, 0), (WIDTH, 0), (WIDTH, top), (0, top)), [bottom, bottom, clear, clear])
+
+    def draw_chasing_boss(self):
+        """뒤쫓아 오는 보스 실루엣. 위협이 오면 그 패턴의 예고 동작을 한다 (뒤에서 공격하는 게 보인다)."""
+        if not boss_sprite.is_available():
+            return
+        progress = min(self.chase_elapsed / CHASE_DURATION, 1.0)
+        bob_height, bob_speed = CHASER_BOB
+        foot = (
+            CHASER_FOOT_START
+            + (CHASER_FOOT_END - CHASER_FOOT_START) * progress
+            + abs(math.sin(self.chase_elapsed * bob_speed)) * bob_height
+        )
+        pattern, state, t = None, "rest", 0.0
+        pending = [th for th in self.threats if not th["landed"]]
+        if pending:
+            newest = pending[-1]
+            pattern, state = newest["pattern"], "telegraph"
+            t = min(newest["elapsed"] / newest["telegraph"], 1.0)
+        pose = boss_sprite.compute_pose(pattern, state, t, self.chase_elapsed, set())
+        center_x = arena.VANISHING_X - arena.camera_x * CHASER_PARALLAX + arena.DRAW_OFFSET_X
+        foot_screen = (center_x, HEIGHT - (foot + arena.DRAW_OFFSET_Y))
+        layout = boss_sprite.Layout(pose, foot_screen, CHASER_SCALE, 0.0)
+        for name in ("body", "arm_l", "arm_r"):
+            layout.draw(name, color=CHASER_RGB, alpha=CHASER_ALPHA)
+        # 붉은 핵 — 그림자 속에서 유일하게 또렷한 빛
+        core_x, core_y = layout.core()
+        core = (core_x - arena.DRAW_OFFSET_X, HEIGHT - core_y - arena.DRAW_OFFSET_Y)
+        pulse = 0.5 + 0.5 * math.sin(self.chase_elapsed * 5.0)
+        arena.draw_radial_glow(*core, 90 + 30 * pulse, 70 + 24 * pulse, (255, 60, 60), round(150 + 60 * pulse))
+        arena.set_draw_rgb(255, 200, 190, 255)
+        arena.draw_filled_circle(*core, 7)
 
     def draw_threat(self, threat):
         visible = self.threat_visible(threat)
