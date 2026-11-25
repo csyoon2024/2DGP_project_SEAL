@@ -70,6 +70,21 @@ CHASER_RGB = (52, 44, 66)  # 원래 색에 곱해 검보랏빛 그림자로
 CHASER_ALPHA = 165
 CHASER_BOB = (9.0, 6.5)  # 뛰는 들썩임 (px, rad/초)
 CHASER_PARALLAX = 1.25  # 좌우 카메라 이동에 대한 반응 — 플레이어(1.0)보다 가까워 더 크게 흐른다
+# 추격 씬 카메라 높이 520 → 430: 레인을 화면 중앙 쪽으로 약 95px 올린다 (뒷줄 y ≈ 95~151,
+#   앞줄 ≈ 185~223). 아래에 뒤쫓는 보스가 들어설 자리가 생긴다. 벽·기둥도 같은 카메라로 그려져
+#   원근이 어긋나지 않는다. 추격 씬의 update·draw 동안만 바꾸고 되돌린다 (보스전은 그대로)
+CHASE_CAMERA_HEIGHT = 430
+# 앞에서 오는 장애물 — 문(소실점) 쪽에서 돌덩이가 플레이어 레인을 따라 다가온다.
+#   다가오는 동안 그 레인의 범위 예고(후려치기와 같은 표시)가 깜빡인다.
+#   옆으로 비키거나(반폭 70 + 플레이어 25 = 95 밖), 레인을 바꾸거나, 회피 무적으로 피한다
+OBSTACLE_FIRST = 3.0  # 첫 장애물 (위협 시계 기준 초)
+OBSTACLE_INTERVAL = (3.0, 1.8)  # 간격: 처음 → 마지막 5초 (위협과 같은 식으로 줄어든다)
+OBSTACLE_TRAVEL = 1.6  # 나타나서 플레이어 깊이에 닿기까지 (위협 시계 기준 초)
+OBSTACLE_WIDTH = 140  # 논리 폭
+OBSTACLE_HEIGHT = 120  # 월드 높이 — 폭(논리 140 ≈ 월드 184)에 비해 너무 낮으면 납작한 판처럼 보인다
+OBSTACLE_START_DEPTH = 0.45  # 뒷벽(0.40) 바로 앞에서 나타난다
+OBSTACLE_END_DEPTH = 1.35  # 플레이어를 지나 카메라 쪽으로 빠져나가 사라지는 깊이
+OBSTACLE_OFFSET = 70  # 플레이어 x에서 이만큼 안쪽 무작위로 노린다 (가만히 있으면 대개 맞는다)
 
 
 class ChaseScene(ArenaScene):
@@ -88,6 +103,8 @@ class ChaseScene(ArenaScene):
         self.chase_elapsed = 0.0
         self.spawn_timer = CHASE_FIRST_THREAT
         self.threats = []
+        self.obstacles = []
+        self.obstacle_timer = OBSTACLE_FIRST
         self.chase_done = False
         self.exit_elapsed = 0.0
         self.player_health = self.entry_health
@@ -147,6 +164,8 @@ class ChaseScene(ArenaScene):
             self.spawn_threat()
             self.spawn_timer += self.spawn_interval()
 
+        self.update_obstacles(threat_delta)
+
         alive = []
         for threat in self.threats:
             threat["elapsed"] += threat_delta
@@ -164,6 +183,7 @@ class ChaseScene(ArenaScene):
         elif self.chase_elapsed >= CHASE_DURATION:
             self.chase_done = True
             self.threats = []
+            self.obstacles = []
 
     # --- 위협 ------------------------------------------------------------------
     def spawn_threat(self):
@@ -223,6 +243,72 @@ class ChaseScene(ArenaScene):
         half = (threat["width"] or 0) * 0.5
         return max(0, threat["x"] - half), min(PLAYER_LOGICAL_WIDTH, threat["x"] + half)
 
+    # --- 앞에서 오는 장애물 ----------------------------------------------------
+    def update_obstacles(self, threat_delta):
+        self.obstacle_timer -= threat_delta
+        if self.obstacle_timer <= 1e-9:
+            lane = self.lane_transition_target or self.player_lane
+            x = self.player_logical_x + self.threat_rng.uniform(-OBSTACLE_OFFSET, OBSTACLE_OFFSET)
+            x = max(OBSTACLE_WIDTH / 2, min(x, PLAYER_LOGICAL_WIDTH - OBSTACLE_WIDTH / 2))
+            self.obstacles.append({"lane": lane, "x": x, "elapsed": 0.0, "resolved": False})
+            ramp = min(self.chase_elapsed / CHASE_INTERVAL_RAMP_END, 1.0)
+            start, end = OBSTACLE_INTERVAL
+            self.obstacle_timer += start + (end - start) * ramp
+        alive = []
+        for obstacle in self.obstacles:
+            obstacle["elapsed"] += threat_delta
+            if not obstacle["resolved"] and obstacle["elapsed"] >= OBSTACLE_TRAVEL:
+                obstacle["resolved"] = True
+                # 판정은 전투와 같은 함수 — 그 레인, 그 x 근처면 맞는다 (회피 무적은 통한다)
+                self.resolve_boss_attack(
+                    BossAttack(
+                        pattern="obstacle",
+                        kind="front",
+                        target_lane=obstacle["lane"],
+                        target_x=obstacle["x"],
+                        hitbox_width=OBSTACLE_WIDTH,
+                    )
+                )
+            if self.obstacle_depth(obstacle) < OBSTACLE_END_DEPTH:
+                alive.append(obstacle)
+        self.obstacles = alive
+
+    def obstacle_depth(self, obstacle):
+        """깊이 역수(1/s) 공간에서 일정한 빠르기로 다가온다 — 원근상 점점 빨라 보인다."""
+        u0 = 1.0 / OBSTACLE_START_DEPTH
+        u1 = 1.0 / LANES[obstacle["lane"]]["scale"]
+        u = u0 + (u1 - u0) * obstacle["elapsed"] / OBSTACLE_TRAVEL
+        return 1.0 / max(u, 1e-3)
+
+    def draw_obstacle(self, obstacle):
+        lane = LANES[obstacle["lane"]]
+        depth = self.obstacle_depth(obstacle)
+        elevation = lane["elevation"]
+        half = OBSTACLE_WIDTH / 2
+        left = logical_to_world_x(obstacle["x"] - half)
+        right = logical_to_world_x(obstacle["x"] + half)
+        mid = (left + right) / 2
+        # 들쭉날쭉한 돌덩이 (월드 좌표 다각형) — 아랫면은 레인 높이
+        outline = [
+            (left, 0), (right, 0), (right + 6, OBSTACLE_HEIGHT * 0.55),
+            (mid + (right - mid) * 0.5, OBSTACLE_HEIGHT), (mid - (mid - left) * 0.4, OBSTACLE_HEIGHT * 0.92),
+            (left - 6, OBSTACLE_HEIGHT * 0.5),
+        ]
+        points = [project(wx, depth, elevation + wy) for wx, wy in outline]
+        fade = min(1.0, obstacle["elapsed"] / 0.25)  # 나타날 때 서서히
+        top, bottom = (78, 74, 86, round(255 * fade)), (34, 30, 40, round(255 * fade))
+        arena.draw_polygon(points, [bottom, bottom, top, top, top, top])
+        r, g, b = CHASE_RED_RGB
+        arena.set_draw_rgb(r, g, b, round(200 * fade))
+        arena.draw_polyline(points)
+
+    def draw_obstacle_warning(self, obstacle):
+        """다가오는 동안 닿을 자리에 범위 예고 — 후려치기와 같은 표시, 같은 깜빡임 간격으로."""
+        progress = obstacle["elapsed"] / OBSTACLE_TRAVEL
+        blink = int(obstacle["elapsed"] / 0.15) % 2 == 1 or progress > 0.8
+        half = OBSTACLE_WIDTH / 2
+        draw_range_marker(obstacle["lane"], obstacle["x"] - half, obstacle["x"] + half, blink)
+
     # --- 끝 ------------------------------------------------------------------
     def finish_chase(self):
         if self.battle_finished:
@@ -237,8 +323,24 @@ class ChaseScene(ArenaScene):
             InterludeScene(self.scene_manager, self.run_state, self.record)
         )
 
-    # --- 그리기 ----------------------------------------------------------------
+    # --- 카메라 높이 (추격 씬 전용) ---------------------------------------------
+    def _with_chase_camera(self, fn, *args):
+        saved = arena.CAMERA_HEIGHT
+        arena.CAMERA_HEIGHT = CHASE_CAMERA_HEIGHT
+        try:
+            return fn(*args)
+        finally:
+            arena.CAMERA_HEIGHT = saved
+
+    def update(self, fixed_delta):
+        # 충돌 순간의 번쩍임 위치(lane_point) 등도 같은 카메라로 계산되게 update도 감싼다
+        self._with_chase_camera(super().update, fixed_delta)
+
     def draw(self):
+        self._with_chase_camera(self._draw_chase)
+
+    # --- 그리기 ----------------------------------------------------------------
+    def _draw_chase(self):
         self.apply_view_zoom()
         if self.screen_shake_timer > 0 and self.screen_shake_duration > 0:
             shake_scale = self.screen_shake_timer / self.screen_shake_duration
@@ -262,6 +364,14 @@ class ChaseScene(ArenaScene):
         for threat in self.threats:
             if not threat["landed"]:
                 self.draw_threat(threat)
+        player_depth = LANES[self.player_lane]["scale"]
+        for obstacle in self.obstacles:
+            if not obstacle["resolved"]:
+                self.draw_obstacle_warning(obstacle)
+        # 플레이어보다 먼 장애물은 플레이어 뒤에, 지나간 것은 앞에 그린다
+        for obstacle in self.obstacles:
+            if self.obstacle_depth(obstacle) <= player_depth:
+                self.draw_obstacle(obstacle)
         self.draw_impact_flash()
 
         lane = LANES[self.player_lane]
@@ -276,6 +386,9 @@ class ChaseScene(ArenaScene):
             logical_to_world_x(self.player_logical_x), player_scale, player_elevation
         )
         self.draw_player(screen_x, player_y, player_scale * arena.view_zoom)
+        for obstacle in self.obstacles:
+            if self.obstacle_depth(obstacle) > player_depth:
+                self.draw_obstacle(obstacle)
         self.draw_player_health()
         arena.DRAW_OFFSET_X = arena.DRAW_OFFSET_Y = 0
         self.draw_chase_hud()
