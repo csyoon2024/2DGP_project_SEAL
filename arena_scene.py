@@ -15,6 +15,8 @@ from pico2d import (
     draw_rectangle as pico_draw_rectangle,
 )
 from boss import (
+    ARMOR_BREAK_GAUGE_BONUS,
+    ARMOR_STAGE_LEAK_SCALE,
     BOSS_PARTS,
     PART_BREAK_GAUGE_BONUS,
     PART_DAMAGE,
@@ -104,7 +106,15 @@ BOSS_SPRITE_BODY_HEIGHT = 264
 BOSS_SPRITE_MAX_LEAN = 12  # 돌진 기울기 상한 (도)
 BOSS_SPRITE_BROKEN_RGB = (118, 118, 128)  # 부서진 팔 — 원래 색에 곱해 생기 빠진 회색으로
 BOSS_SPRITE_DEFEATED_RGB = (80, 82, 92)
-BOSS_SPRITE_FLASH_RGB = (255, 244, 224)  # 피격 순간 흰 번쩍임 (실루엣을 반투명으로 덮는다)
+BOSS_SPRITE_FLASH_RGB = (255, 244, 224)
+# 보스 2: 보스 1 스프라이트를 색만 바꿔 쓴다 (원래 색에 곱한다 — 회색 돌·붉은 빛 → 보랏빛 쇠)
+BOSS2_TINT_RGB = (172, 150, 255)
+# 보스 2 장갑판 — 핵 위를 덮는 육각 철판 (도형). 반지름 = 핵 표시 반지름 × 이 값
+ARMOR_RADIUS_SCALE = 1.45
+ARMOR_RGB = (78, 84, 108)
+ARMOR_EDGE_RGB = (150, 158, 186)
+ARMOR_SHARD_RGB = (176, 182, 206)
+ARMOR_BREAK_SHAKE = (18, 0.40)  # 장갑이 깨지는 순간 — 팔 파괴(14, 0.3)보다 크게  # 피격 순간 흰 번쩍임 (실루엣을 반투명으로 덮는다)
 
 # 부위 파괴 연출
 PART_BREAK_SHAKE = (14, 0.30)  # 팔이 부서지는 순간 화면 흔들림 (px, 초)
@@ -1303,10 +1313,12 @@ def draw_player_placeholder(screen_x, foot_y, scale):
 
 
 class ArenaScene:
-    def __init__(self, scene_manager=None, run_state=None):
+    def __init__(self, scene_manager=None, run_state=None, boss_id=1):
         # 씬 전환용. 없으면(테스트 스크립트 등) 처치 연출 뒤 quit_requested만 세운다
         self.scene_manager = scene_manager
         self.run_state = run_state
+        # 1 = 보스 1, 2 = 보스 2 (핵이 장갑에 덮여 있다). 디버그 F10으로 바꿀 수 있다
+        self.boss_id = boss_id
         # 전투 기록 (InterludeScene에 넘긴다). 판정에는 쓰지 않는다
         self.battle_elapsed = 0.0
         self.hits_taken = 0
@@ -1350,7 +1362,7 @@ class ArenaScene:
         self.impact_flash_position = (640, 360)
         self.player_health = PLAYER_MAX_HEALTH
         self.seal_gauge = SealGauge()
-        self.boss = BossController()
+        self.boss = BossController(boss_id)
         self.boss_phase = 1
         self.boss_defeated = False
         self.game_end_elapsed = 0.0
@@ -1414,7 +1426,7 @@ class ArenaScene:
                     self.seal_gauge.value + DEBUG_GAUGE_STEP
                 )
             elif event.key == pico2d.SDLK_F6:
-                available_patterns = tuple(PHASE_PATTERNS[self.boss_phase])
+                available_patterns = tuple(self.boss.phase_patterns[self.boss_phase])
                 pattern_index = (
                     available_patterns.index(self.debug_forced_pattern) + 1
                     if self.debug_forced_pattern in available_patterns
@@ -1426,8 +1438,12 @@ class ArenaScene:
             elif event.key in (pico2d.SDLK_F8, pico2d.SDLK_F9):
                 # 디버그: 팔 즉시 파괴 (F8 화면 왼쪽 팔, F9 화면 오른쪽 팔)
                 part = "arm_l" if event.key == pico2d.SDLK_F8 else "arm_r"
-                if self.boss.break_part(part):
-                    self.on_part_broken(part)
+                armor_stage = self.boss.armor_intact()
+                for broken in self.boss.break_part(part):
+                    self.on_part_broken(broken, armor_stage)
+            elif event.key == pico2d.SDLK_F10:
+                # 디버그: 보스 1 ↔ 2 바꿔 처음부터
+                self.switch_boss(2 if self.boss_id == 1 else 1)
             elif event.key == pico2d.SDLK_F7:
                 self.debug_pattern_seed_fixed = not self.debug_pattern_seed_fixed
                 self.debug_pattern_rng = random.Random(
@@ -1467,6 +1483,11 @@ class ArenaScene:
         if target_lane == "platform_2":
             # 뒷줄로 물러서면 기세 -1. 전환을 시작한 순간 깎아 결정의 대가가 바로 보이게 한다
             self.lose_momentum()
+
+    def switch_boss(self, boss_id):
+        self.boss_id = boss_id
+        self.boss = BossController(boss_id)
+        self.reset_player()
 
     def reset_player(self):
         self.momentum = 0
@@ -1564,6 +1585,38 @@ class ArenaScene:
             self.screen_shake_timer = duration
             self.screen_shake_frame = 0
 
+    def on_armor_broken(self):
+        """보스 2 장갑 파괴: 게이지 큰 보상, 강한 흔들림, 철판 조각, 핵 노출 → 2페이즈(핵)."""
+        self.seal_gauge.push_toward_player(ARMOR_BREAK_GAUGE_BONUS)
+        self.trigger_screen_shake(*ARMOR_BREAK_SHAKE)
+        core = (self.boss_geometry or {}).get("core")
+        if core is not None:
+            x, y, radius = core
+            self.trigger_impact_flash(x, y)
+            for index in range(22):
+                angle = index / 22 * math.tau + self.fx_rng.uniform(-0.2, 0.2)
+                speed = self.fx_rng.uniform(140, 380)
+                self.chain_shards.append(
+                    {
+                        "x": x + math.cos(angle) * radius * 0.8,
+                        "y": y + math.sin(angle) * radius * 0.8,
+                        "vx": math.cos(angle) * speed,
+                        "vy": math.sin(angle) * speed + 120,
+                        "angle": self.fx_rng.uniform(0, math.tau),
+                        "spin": self.fx_rng.uniform(-14, 14),
+                        "life": CHAIN_SHARD_LIFE * self.fx_rng.uniform(0.8, 1.1),
+                        "size": self.fx_rng.uniform(5.0, 9.0),
+                        "rgb": ARMOR_SHARD_RGB,
+                    }
+                )
+        if self.boss_phase == 1:
+            # 핵이 드러나면 2페이즈. 게이지는 이어받고(리셋 없음), 이후는 보스 1의 2페이즈와 같다
+            self.boss_phase = 2
+            self.debug_phase = 2
+            self.seal_gauge.set_phase(2)
+            self.boss.reset_for_phase(2)
+            self.boss.begin_awakening_demo()
+
     def trigger_impact_flash(self, x, y):
         self.impact_flash_position = (x, y)
         self.impact_flash_timer = 0.08
@@ -1632,7 +1685,7 @@ class ArenaScene:
 
         팔이 부서져도 그 구역은 핵이 되지 않는다 — 부서진 팔에 맞으면 아무 일도 없다.
         """
-        return part_at(self.player_logical_x)
+        return self.boss.part_at(self.player_logical_x)
 
     def aimed_part(self):
         """조준 표시용 — 앞줄에서 공격이 닿는 거리일 때만 부위 이름, 아니면 None."""
@@ -1648,14 +1701,25 @@ class ArenaScene:
         if part == "core":
             # 획득량은 적중 전 기세로 정한다
             self.seal_gauge.player_attack_hit(self.attack_type, self.momentum)
-        elif self.boss.damage_part(part, PART_DAMAGE[self.attack_type]):
-            # 부서진 팔이면 damage_part가 아무것도 안 하고 False — 게이지도 내구도도 그대로
-            self.on_part_broken(part)
+        else:
+            # 팔·장갑: 내구도만 깎는다 (게이지는 안 민다). 부서진 팔이면 아무 일도 없다.
+            # 보스 2는 팔이 부서지면 장갑도 깎여 같이 부서질 수 있다
+            armor_stage = self.boss.armor_intact()
+            for broken in self.boss.damage_part(part, PART_DAMAGE[self.attack_type]):
+                self.on_part_broken(broken, armor_stage)
         return part
 
-    def on_part_broken(self, part):
-        """팔이 부서진 순간: 게이지 보상, 강한 흔들림, 사슬이 끊겨 흩어진다."""
-        self.seal_gauge.push_toward_player(PART_BREAK_GAUGE_BONUS)
+    def on_part_broken(self, part, armor_stage=False):
+        """부위가 부서진 순간. 팔: 게이지 보상·흔들림·사슬 파편. 장갑: 핵 노출·2페이즈.
+
+        armor_stage: 이 타격이 보스 2 장갑 단계에서 일어났는가 — 그 단계에선 어떤 타격도
+        게이지를 밀지 않으므로 팔 파괴 보상도 없다 (대신 장갑이 8 깎인다).
+        """
+        if part == "armor":
+            self.on_armor_broken()
+            return
+        if not armor_stage:
+            self.seal_gauge.push_toward_player(PART_BREAK_GAUGE_BONUS)
         self.trigger_screen_shake(*PART_BREAK_SHAKE)
         side = -1 if part == "arm_l" else 1
         chain = (self.boss_geometry or {}).get("chains", {}).get(side)
@@ -1888,6 +1952,8 @@ class ArenaScene:
         self.screen_shake_timer = max(0.0, self.screen_shake_timer - fixed_delta)
         self.impact_flash_timer = max(0.0, self.impact_flash_timer - fixed_delta)
         self.screen_shake_frame += 1
+        # 보스 2 장갑 단계: 게이지를 되밀 방법이 없으므로 누수를 절반으로
+        self.seal_gauge.leak_scale = ARMOR_STAGE_LEAK_SCALE if self.boss.armor_intact() else 1.0
         self.seal_gauge.update(fixed_delta)
         self.boss.set_awakened(self.boss_should_awaken())
 
@@ -1982,7 +2048,10 @@ class ArenaScene:
         if self.player_health <= 0:
             self.restart_current_phase()
         elif self.seal_gauge.player_won:
-            if self.boss_phase == 1:
+            if self.boss_phase == 1 and self.boss.has_armor():
+                # 보스 2는 장갑이 부서져야 2페이즈 (장갑 단계엔 게이지가 안 움직여 보통 닿지 않는다)
+                pass
+            elif self.boss_phase == 1:
                 self.boss_phase = 2
                 self.seal_gauge.set_phase(2)
                 self.debug_phase = 2
@@ -2123,6 +2192,8 @@ class ArenaScene:
             broken_sides,
             )
         self.boss_eye_screen = self.boss_geometry["eye"]
+        if self.boss.armor_intact():
+            self.draw_armor()
         self.draw_aim_marker()
 
         draw_lane("platform_1", "front_lane", "front_edge", 8)
@@ -2375,9 +2446,9 @@ class ArenaScene:
 
     def draw_debug_panel(self):
         set_draw_color("actor_dark")
-        draw_filled_rectangle(20, 312, 430, 700)  # 390 → 312: PHASE MOD·MOMENTUM·PARTS 세 줄(26px씩) 추가
+        draw_filled_rectangle(20, 286, 430, 700)  # 390 → 286: PHASE MOD·MOMENTUM·PARTS·BOSS 네 줄(26px씩) 추가
         set_draw_color("rear_edge")
-        draw_rectangle(20, 312, 430, 700)
+        draw_rectangle(20, 286, 430, 700)
 
         if self.debug_font is None:
             font_path = os.path.join(
@@ -2401,7 +2472,10 @@ class ArenaScene:
             f"HITS       {self.successful_hits}",
             f"PHASE      {self.debug_phase}  [F5 jump]",
             f"PHASE MOD  tel x{PHASE_MODIFIERS[self.boss_phase]['telegraph_scale']:.2f}  hit {PHASE_MODIFIERS[self.boss_phase]['hit_loss'] * SealGauge.GAUGE_CHANGE_SCALE:.3f}",
-            f"PARTS      L {self.boss.part_durability['arm_l']}  R {self.boss.part_durability['arm_r']}  aim {self.aimed_part() or '-'}  [F8/F9]",
+            f"PARTS      L {self.boss.part_durability['arm_l']}  R {self.boss.part_durability['arm_r']}"
+            + (f"  A {self.boss.part_durability['armor']}" if self.boss.has_armor() else "")
+            + f"  aim {self.aimed_part() or '-'}  [F8/F9]",
+            f"BOSS       {self.boss_id}  rage x{self.boss.rage_scale():.2f}  [F10 switch]",
             f"MOMENTUM   {self.momentum}/{SealGauge.MOMENTUM_MAX}  gain B {self.seal_gauge.attack_gain('basic', self.momentum):.0%} H {self.seal_gauge.attack_gain('heavy', self.momentum):.0%}",
             f"GAUGE      {self.seal_gauge.value:4.0%}  [[ / ] adjust]",
             f"PATTERN    {self.debug_forced_pattern or '-'}  [F6 cycle]",
@@ -2606,7 +2680,9 @@ class ArenaScene:
         set_draw_color("shadow")
         draw_filled_ellipse(center_x, burial_y, 150 * scale, 12 * scale)
 
-        tint = BOSS_SPRITE_DEFEATED_RGB if self.boss_defeated else None
+        tint = BOSS2_TINT_RGB if self.boss_id == 2 else None
+        if self.boss_defeated:
+            tint = BOSS_SPRITE_DEFEATED_RGB
         flash = self.boss_hit_timer > 0
         layout.draw("body", color=tint)
         if flash:
@@ -2650,6 +2726,8 @@ class ArenaScene:
             return
         scale = geometry["scale"]
         aimed = self.aimed_part()
+        if "layout" not in geometry and self.boss.armor_intact():
+            self.draw_armor_aim(aimed == "armor")
         if "layout" in geometry:
             self.draw_aim_marker_sprite(geometry, aimed)
             return
@@ -2669,7 +2747,7 @@ class ArenaScene:
                 continue
             shoulder, elbow, hand = arm
             durability = self.boss.part_durability[name]
-            damaged = durability < dict((n, d) for n, _, _, d in BOSS_PARTS)[name]
+            damaged = durability < self.part_total(name)
             if aimed == name:
                 # 팔 윤곽: 팔 위에 반투명 굵은 선 + 밝은 얇은 선
                 set_draw_rgb(*AIM_RGB, 90)
@@ -2681,9 +2759,47 @@ class ArenaScene:
             if aimed == name or damaged:
                 self.draw_part_bar(name, shoulder, side, bright=aimed == name)
 
+    def armor_points(self, grow=0.0):
+        x, y, radius = self.boss_geometry["core"]
+        r = radius * ARMOR_RADIUS_SCALE + grow
+        # 위아래가 뾰족한 육각형 (가로로 조금 넓게)
+        return [
+            (x + math.cos(math.radians(90 + 60 * i)) * r * 1.12, y + math.sin(math.radians(90 + 60 * i)) * r)
+            for i in range(6)
+        ]
+
+    def draw_armor(self):
+        """보스 2 장갑판 — 핵을 덮는 육각 철판. 깎일수록 금이 늘어난다."""
+        x, y, radius = self.boss_geometry["core"]
+        outer = self.armor_points(3 * view_zoom)
+        inner = self.armor_points()
+        draw_polygon(outer, [(34, 36, 48, 255)] * 6)
+        top, bottom = (104, 112, 140, 255), ARMOR_RGB + (255,)
+        draw_polygon(inner, [top, top, bottom, bottom, bottom, top])
+        set_draw_rgb(*ARMOR_EDGE_RGB, 220)
+        draw_polyline(inner)
+        r = radius * ARMOR_RADIUS_SCALE
+        for i in range(6):  # 리벳
+            a = math.radians(60 * i + 30)
+            set_draw_rgb(*ARMOR_EDGE_RGB, 255)
+            draw_filled_circle(x + math.cos(a) * r * 0.78, y + math.sin(a) * r * 0.72, 2.4 * view_zoom)
+        # 금: 깎인 비율만큼 (최대 7줄). 방향은 고정이라 매 프레임 같은 자리에 남는다
+        total = self.part_total("armor")
+        damage = 1.0 - self.boss.part_durability["armor"] / total
+        cracks = int(damage * 7 + 0.999) if damage > 0 else 0
+        set_draw_rgb(20, 18, 28, 255)
+        for i in range(cracks):
+            a = math.radians(37 + i * 101)
+            length = r * (0.55 + 0.35 * ((i * 37) % 10) / 10)
+            mid = (x + math.cos(a + 0.35) * length * 0.5, y + math.sin(a + 0.35) * length * 0.5)
+            draw_line(x, y, *mid)
+            draw_line(*mid, x + math.cos(a) * length, y + math.sin(a) * length)
+
     def draw_aim_marker_sprite(self, geometry, aimed):
         """스프라이트 보스용 조준 표시: 조준한 팔 실루엣을 파랗게 덮고, 핵이면 고리."""
         layout = geometry["layout"]
+        if self.boss.armor_intact():
+            self.draw_armor_aim(aimed == "armor")
         if aimed == "core":
             x, y, radius = geometry["core"]
             draw_radial_glow(x, y, radius * 1.6, radius * 1.3, AIM_RGB, 120)
@@ -2701,17 +2817,35 @@ class ArenaScene:
             top = max(y for _, y in points)
             center_x = sum(x for x, _ in points) / 4
             durability = self.boss.part_durability[name]
-            damaged = durability < dict((n, d) for n, _, _, d in BOSS_PARTS)[name]
+            damaged = durability < self.part_total(name)
             if aimed == name:
                 layout.draw(name, "silhouette", AIM_RGB, 110)
             if aimed == name or damaged:
                 self.draw_part_bar(name, (center_x, top - 14 * view_zoom), 0, bright=aimed == name)
 
+    def part_total(self, name):
+        return dict((n, d) for n, _, _, d in self.boss.parts)[name]
+
+    def draw_armor_aim(self, aimed):
+        """장갑 조준 표시: 윤곽 발광 + 내구도. 깎였으면 조준이 아니어도 흐린 막대."""
+        x, y, radius = self.boss_geometry["core"]
+        damaged = self.boss.part_durability["armor"] < self.part_total("armor")
+        if aimed:
+            draw_radial_glow(x, y, radius * 2.2, radius * 2.0, AIM_RGB, 110)
+            set_draw_rgb(170, 214, 255, 240)
+            draw_polyline(self.armor_points(2 * view_zoom))
+        if aimed or damaged:
+            top = max(py for _, py in self.armor_points())
+            self.draw_part_bar("armor", (x, top - 8 * view_zoom), 0, bright=aimed)
+
     def draw_part_bar(self, name, shoulder, side, bright):
-        """팔 내구도 8칸 — 어깨 위. 조준 중이면 밝게, 아니면(깎인 팔) 흐리게."""
-        total = dict((n, d) for n, _, _, d in BOSS_PARTS)[name]
+        """부위 내구도 칸 — 팔은 어깨 위, 장갑은 장갑 위. 조준 중이면 밝게, 아니면(깎인 부위) 흐리게."""
+        total = self.part_total(name)
         left_now = self.boss.part_durability[name]
         cell_w, cell_h, gap = (v * view_zoom for v in PART_BAR_CELL)
+        if total > 8:
+            # 장갑(20칸)은 칸을 좁혀 팔 막대(8칸)와 비슷한 폭으로
+            cell_w, gap = cell_w * 0.45, gap * 0.5
         width = total * cell_w + (total - 1) * gap
         x0 = shoulder[0] + side * 18 * view_zoom - width / 2
         y0 = shoulder[1] + 22 * view_zoom
@@ -2739,7 +2873,8 @@ class ArenaScene:
                 )
                 for offset, stretch in ((0.0, 1.0), (1.57, 0.55), (3.14, 1.0), (4.71, 0.55))
             ]
-            draw_polygon(points, [CHAIN_HIGHLIGHT_RGB + (round(255 * min(1.0, t * 1.5)),)] * 4)
+            rgb = shard.get("rgb", CHAIN_HIGHLIGHT_RGB)
+            draw_polygon(points, [rgb + (round(255 * min(1.0, t * 1.5)),)] * 4)
 
     def backhand_range(self):
         """후려치기 판정 범위 (논리 x). resolve_boss_attack과 같은 폭 (+ 플레이어 반폭 25 제외)."""
@@ -2934,5 +3069,8 @@ class ArenaScene:
         else:
             state = "AWAKENED" if self.boss.awakened else "NORMAL"
             pattern = self.boss.current_pattern or "WAIT"
-            status = f"BOSS PHASE {self.boss_phase}  {state}  {pattern.upper()}"
+            stage = ""
+            if self.boss.armor_intact():
+                stage = f"  ARMOR {self.boss.part_durability['armor']}"
+            status = f"BOSS {self.boss_id} PHASE {self.boss_phase}{stage}  {state}  {pattern.upper()}"
         self.debug_font.draw(24, HEIGHT - 40, status, (240, 230, 215))

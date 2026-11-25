@@ -70,7 +70,10 @@ class InterludeScene:
 
         self.run_state.add_skill(self.choices[self.selected])
         # 다음 전투. 아직 보스가 하나뿐이라 같은 보스를 다시 띄운다
-        self.scene_manager.change_scene(ArenaScene(self.scene_manager, self.run_state))
+        # 다음 전투: 보스 1 → 보스 2 → (이후 보스 2 반복)
+        self.scene_manager.change_scene(
+            ArenaScene(self.scene_manager, self.run_state, self.run_state.next_boss_id())
+        )
 
     # --- 배치 ---------------------------------------------------------------
     def card_rect(self, index):

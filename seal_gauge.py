@@ -37,6 +37,8 @@ class SealGauge:
     def __init__(self):
         self.value = self.INITIAL_VALUE
         self.phase = 1
+        # 누수 배율 — 보스 2의 장갑 단계에서만 0.5 (ArenaScene이 정한다). 누수 상수 자체는 그대로
+        self.leak_scale = 1.0
         self.boss_awakened = False
         # 회복 기준점: 마지막 회복(또는 체력이 가득했던 때) 이후 가장 보스 쪽으로 밀린 값
         self.recovery_mark = self.value
@@ -52,7 +54,10 @@ class SealGauge:
 
     def update(self, fixed_delta):
         if not self.player_won:
-            self.value = min(1.0, self.value + self.LEAK_PER_SECOND * fixed_delta)
+            leak = self.LEAK_PER_SECOND * fixed_delta
+            if self.leak_scale != 1.0:
+                leak *= self.leak_scale
+            self.value = min(1.0, self.value + leak)
             self._update_recovery_mark()
         self._update_awakened_state()
 

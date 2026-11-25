@@ -31,6 +31,8 @@ SKILL_POOL = (
     Skill("ward", "결계", "피격 시 밀리는\n게이지가 줄어든다"),
 )
 SKILL_CHOICE_COUNT = 3
+# 전투 순서. 마지막 보스를 잡은 뒤에는 마지막 보스를 다시 띄운다 (보스가 더 생기면 여기에 추가)
+BOSS_ORDER = (1, 2)
 
 
 @dataclass
@@ -47,6 +49,9 @@ class RunState:
         if len(pool) < SKILL_CHOICE_COUNT:
             pool = list(SKILL_POOL)
         return rng.sample(pool, SKILL_CHOICE_COUNT)
+
+    def next_boss_id(self):
+        return BOSS_ORDER[min(self.battles_cleared, len(BOSS_ORDER) - 1)]
 
     def record_battle(self, record):
         self.records.append(record)

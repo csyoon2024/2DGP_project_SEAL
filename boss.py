@@ -50,9 +50,11 @@ PHASE_MODIFIERS = {
 MIN_TELEGRAPH = 0.30
 
 
-def telegraph_duration(pattern, phase):
-    """페이즈 배율과 하한을 적용한 예고 시간. 패턴 시작 시 한 번만 계산한다."""
+def telegraph_duration(pattern, phase, extra_scale=1.0):
+    """페이즈 배율(× 보스 2 팔 분노 배율)과 하한을 적용한 예고 시간. 패턴 시작 시 한 번만 계산."""
     scale = PHASE_MODIFIERS[phase]["telegraph_scale"]
+    if extra_scale != 1.0:
+        scale *= extra_scale
     return max(MIN_TELEGRAPH, PATTERNS[pattern]["telegraph"] * scale)
 # ---------------------------------------------------------------------------
 # 부위 파괴. 공격이 적중한 순간 플레이어의 논리 x가 어느 구역인지로 맞은 부위를 정한다.
@@ -84,14 +86,62 @@ PATTERN_PART = {
 }
 
 
-def part_at(logical_x):
-    """논리 x가 속한 부위 이름. 구역 밖 끝자락은 가장 가까운 구역으로."""
-    for name, left, right, _ in BOSS_PARTS:
-        if left <= logical_x < right:
+def part_at(logical_x, parts=BOSS_PARTS, is_broken=lambda name: False):
+    """논리 x가 속한 부위 이름. 구역 밖 끝자락은 가장 가까운 구역으로.
+
+    같은 구역에 부위가 여럿이면(보스 2: 장갑 위에 핵) 앞에 적힌 것이 먼저 맞고,
+    그것이 부서졌을 때만 다음 것이 드러난다. 한 구역에 부위가 하나뿐이면 부서졌어도
+    그 부위다 (부서진 팔 구역은 핵이 되지 않는다).
+    """
+    first_left, last_right = min(p[1] for p in parts), max(p[2] for p in parts)
+    x = min(max(logical_x, first_left), last_right - 1e-6)
+    candidates = [name for name, left, right, _ in parts if left <= x < right]
+    for name in candidates[:-1]:
+        if not is_broken(name):
             return name
-    if logical_x < BOSS_PARTS[0][1]:
-        return BOSS_PARTS[0][0]
-    return BOSS_PARTS[-1][0]
+    return candidates[-1]
+
+
+# ---------------------------------------------------------------------------
+# 보스 2 — 핵이 장갑에 덮여 있어 순서가 강제된다 (보스 1은 핵을 바로 칠 수 있다).
+# 장갑이 멀쩡한 동안 400~500을 때리면 장갑이 맞고, 부서지면 그 자리가 핵이 된다.
+#   내구도 20: 강공격 7회 / 기본 20회. 팔을 하나 부술 때마다 8씩 깎여(ARMOR_DAMAGE_PER_ARM)
+#   팔부터 부수면 장갑이 빨리 열린다 — 직접 두들기는 길과 팔을 도는 길 두 가지
+# ---------------------------------------------------------------------------
+BOSS2_PARTS = (
+    ("arm_l", 300, 400, 8),
+    ("armor", 400, 500, 20),  # 핵을 덮고 있다 — 같은 구역의 core보다 먼저 맞는다
+    ("arm_r", 500, 600, 8),
+    ("core", 400, 500, None),  # 장갑이 부서진 뒤에만 노출
+)
+ARMOR_DAMAGE_PER_ARM = 8
+# 장갑이 부서지는 순간의 보상: 게이지를 이만큼 민다 (팔 파괴 10보다 큰 일회성 보상.
+#   SealGauge.GAUGE_CHANGE_SCALE이 곱해진다)
+ARMOR_BREAK_GAUGE_BONUS = 0.20
+# 장갑 단계 누수 배율. 이 단계엔 어떤 타격도 게이지를 밀지 못해서, 누수가 그대로면
+#   되밀 방법 없이 계속 밀려 금방 각성한다 → 절반으로
+ARMOR_STAGE_LEAK_SCALE = 0.5
+# 보스 2의 페이즈 = 장갑(1) / 핵(2). 광역(충격파)과 관통(돌진) 비중을 높여 뒷줄에 머물기가
+#   보스 1보다 어렵다
+BOSS2_PHASE_PATTERNS = {
+    1: {"shockwave": 35, "charge": 30, "slam": 20, "backhand": 15},
+    2: {
+        "shockwave": 25,
+        "charge": 25,
+        "slam": 20,
+        "backhand": 10,
+        "homing": 10,
+        "slam_double": 10,
+    },
+}
+# 보스 2 전용: 부서진 팔 수에 따라 남은 패턴의 예고 시간에 곱한다 (하한 MIN_TELEGRAPH 유지).
+#   부위 파괴가 공짜가 아니게 되고, 보스가 팔을 잃고 사나워지는 것처럼 보인다
+BOSS2_ARM_RAGE = (1.00, 0.85, 0.75)  # 부서진 팔 0 / 1 / 2개
+
+BOSS_DEFS = {
+    1: {"parts": BOSS_PARTS, "phase_patterns": PHASE_PATTERNS, "arm_rage": None},
+    2: {"parts": BOSS2_PARTS, "phase_patterns": BOSS2_PHASE_PATTERNS, "arm_rage": BOSS2_ARM_RAGE},
+}
 
 
 # 내리찍기 충격이 앞줄에 먼저 닿고 뒷줄에는 이만큼 늦게 닿는다 (초).
@@ -205,7 +255,12 @@ class BossController:
     AWAKENING_SIZE_SCALE = 1.4
     AWAKENING_HITBOX_SCALE = 1.4
 
-    def __init__(self):
+    def __init__(self, boss_id=1):
+        self.boss_id = boss_id
+        definition = BOSS_DEFS[boss_id]
+        self.parts = definition["parts"]
+        self.phase_patterns = definition["phase_patterns"]
+        self.arm_rage = definition["arm_rage"]
         self.awakened = False
         self.phase = 1
         self.reset_parts()
@@ -216,7 +271,7 @@ class BossController:
         """부위 내구도는 한 전투 내내 이어진다 (페이즈 전환·사망 재시작에서도 유지)."""
         self.part_durability = {
             name: durability
-            for name, _, _, durability in BOSS_PARTS
+            for name, _, _, durability in self.parts
             if durability is not None
         }
 
@@ -231,20 +286,45 @@ class BossController:
             return not self.part_broken(part)
         return True
 
+    def part_at(self, logical_x):
+        """이 보스에서 논리 x에 맞을 부위 (보스 2는 장갑이 부서지기 전까지 가운데가 장갑)."""
+        return part_at(logical_x, self.parts, self.part_broken)
+
+    def has_armor(self):
+        return "armor" in self.part_durability
+
+    def armor_intact(self):
+        return self.has_armor() and not self.part_broken("armor")
+
+    def broken_arm_count(self):
+        return sum(1 for name in ("arm_l", "arm_r") if self.part_broken(name))
+
+    def rage_scale(self):
+        """보스 2: 부서진 팔 수에 따른 예고 배율. 보스 1은 항상 1."""
+        if self.arm_rage is None:
+            return 1.0
+        return self.arm_rage[self.broken_arm_count()]
+
     def damage_part(self, name, amount):
-        """팔 내구도를 깎는다. 이번에 부서졌으면 True."""
+        """부위 내구도를 깎는다. 이번에 부서진 부위 이름 목록을 돌려준다 (없으면 빈 목록).
+
+        보스 2: 팔이 부서지면 장갑도 ARMOR_DAMAGE_PER_ARM만큼 깎인다 (그걸로 장갑이 부서질 수도 있다).
+        """
         if name not in self.part_durability or self.part_broken(name):
-            return False
+            return []
         self.part_durability[name] = max(0, self.part_durability[name] - amount)
-        if self.part_durability[name] == 0:
-            self._cancel_unavailable_pattern()
-            return True
-        return False
+        if self.part_durability[name] > 0:
+            return []
+        broken = [name]
+        if name in ("arm_l", "arm_r") and self.armor_intact():
+            broken += self.damage_part("armor", ARMOR_DAMAGE_PER_ARM)
+        self._cancel_unavailable_pattern()
+        return broken
 
     def break_part(self, name):
-        """디버그: 즉시 파괴. 이번에 부서졌으면 True."""
+        """디버그: 즉시 파괴. 이번에 부서진 부위 목록."""
         if name not in self.part_durability or self.part_broken(name):
-            return False
+            return []
         return self.damage_part(name, self.part_durability[name])
 
     def _cancel_unavailable_pattern(self):
@@ -373,7 +453,7 @@ class BossController:
         #   (rng.choices는 가중치 합으로 나눠 뽑으므로 재정규화가 자동이다)
         weights = {
             name: weight
-            for name, weight in PHASE_PATTERNS[phase].items()
+            for name, weight in self.phase_patterns[phase].items()
             if self.pattern_available(name)
         }
         if forced_pattern in weights:
@@ -420,7 +500,8 @@ class BossController:
             self.secondary_target_x = player_x + second_direction * 180
         self.state = "telegraph"
         # 페이즈 배율은 여기서 한 번만 곱한다. 매 프레임 곱하면 고정 타임스텝 타이밍이 흔들린다
-        self.current_telegraph = telegraph_duration(pattern, phase)
+        # 보스 2는 부서진 팔 수만큼 더 빨라진다 (보스 1은 배율 1 — 계산 결과가 전과 같다)
+        self.current_telegraph = telegraph_duration(pattern, phase, self.rage_scale())
         self.timer = self.current_telegraph
         self.telegraph_elapsed = 0.0
 
